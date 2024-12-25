@@ -2,6 +2,7 @@ package cron
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -57,21 +58,25 @@ func TestScheduler_DynamicRegister(t *testing.T) {
 
 func TestScheduler_StopService(t *testing.T) {
 	scheduler := NewCronScheduler()
-	count := 0
+	var count int32
 
 	job, _ := NewJobModel("*/1 * * * * *", func() {
-		count++
+		atomic.AddInt32(&count, 1)
 	})
 
 	scheduler.Register("test", job)
 	scheduler.Start()
 
+	// 等待任务执行几次
 	time.Sleep(2 * time.Second)
 	scheduler.StopService("test")
-	currentCount := count
-	time.Sleep(2 * time.Second)
+	currentCount := atomic.LoadInt32(&count)
 
-	if count != currentCount {
+	// 再等待一段时间，确认任务已停止
+	time.Sleep(2 * time.Second)
+	finalCount := atomic.LoadInt32(&count)
+
+	if finalCount != currentCount {
 		t.Fatal("停止服务后任务仍在执行")
 	}
 }
