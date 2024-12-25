@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -133,7 +134,7 @@ func TestCrontab_CronJob(t *testing.T) {
 
 func TestCrontab_AsyncConcurrent(t *testing.T) {
 	scheduler := New()
-	executionCount := 0
+	var executionCount int32 // 使用原子计数器
 
 	// 添加一个耗时的异步任务
 	err := scheduler.AddJob(JobConfig{
@@ -142,8 +143,8 @@ func TestCrontab_AsyncConcurrent(t *testing.T) {
 		Async:         true,
 		MaxConcurrent: 2, // 限制最大并发为2
 	}, func() {
-		executionCount++
-		time.Sleep(2 * time.Second) // 模拟耗时任务
+		atomic.AddInt32(&executionCount, 1) // 使用原子操作增加计数
+		time.Sleep(2 * time.Second)         // 模拟耗时任务
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -153,9 +154,12 @@ func TestCrontab_AsyncConcurrent(t *testing.T) {
 	time.Sleep(5 * time.Second)
 	scheduler.Stop()
 
+	// 使用原子操作读取最终计数
+	finalCount := atomic.LoadInt32(&executionCount)
+
 	// 由于最大并发限制为2，执行次数应该小于等于2
-	if executionCount > 2 {
-		t.Errorf("并发限制失效: 预期最大执行次数为2，实际执行了%d次", executionCount)
+	if finalCount > 2 {
+		t.Errorf("并发限制失效: 预期最大执行次数为2，实际执行了%d次", finalCount)
 	}
 }
 

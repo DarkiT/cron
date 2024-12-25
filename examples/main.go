@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,7 +14,7 @@ import (
 type simplePanicHandler struct{}
 
 func (h *simplePanicHandler) Handle(jobName string, err interface{}) {
-	log.Printf("捕获到panic [%s]: %v", jobName, err)
+	slog.Error(fmt.Sprintf("任务 [%s] 执行出错: %v", jobName, err))
 }
 
 func main() {
@@ -29,10 +29,10 @@ func main() {
 		Schedule: "*/5 * * * * *", // 每5秒执行一次
 		Async:    true,            // 异步执行
 	}, func() {
-		fmt.Printf("当前时间: %v\n", time.Now().Format("2006-01-02 15:04:05"))
+		slog.Info(fmt.Sprintf("当前时间: %v", time.Now().Format("2006-01-02 15:04:05")))
 	})
 	if err != nil {
-		log.Fatal(err)
+		slog.Info("添加任务失败", "error", err)
 	}
 
 	// 添加一个每分钟执行的带异常处理的任务
@@ -44,7 +44,7 @@ func main() {
 		panic("任务执行出错了！")
 	})
 	if err != nil {
-		log.Fatal(err)
+		slog.Info("添加任务失败", "error", err)
 	}
 
 	// 添加带超时和并发限制的任务
@@ -57,10 +57,10 @@ func main() {
 	}, func() {
 		// 模拟耗时操作
 		time.Sleep(time.Second * 3)
-		fmt.Println("耗时任务执行完成")
+		slog.Info("耗时任务执行完成")
 	})
 	if err != nil {
-		log.Fatal(err)
+		slog.Info("添加任务失败", "error", err)
 	}
 
 	// 启动调度器
@@ -75,10 +75,10 @@ func main() {
 		Schedule: "*/10 * * * * *", // 更新为每10秒执行一次
 		Async:    true,
 	}, func() {
-		fmt.Printf("[执行时间:%d] 更新后的任务 - 当前时间: %v\n", time.Now().UnixNano(), time.Now().Format("2006-01-02 15:04:05"))
+		slog.Info(fmt.Sprintf("[执行时间:%d] 更新后的任务 - 当前时间: %v", time.Now().UnixNano(), time.Now().Format("2006-01-02 15:04:05")))
 	})
 	if err != nil {
-		log.Printf("更新任务失败: %v", err)
+		slog.Info("更新任务失败", "error", err)
 	}
 
 	// 等待信号优雅退出
