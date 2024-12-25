@@ -242,7 +242,7 @@ func (c *Crontab) StopService(names ...string)
 func (c *Crontab) StopServicePrefix(namePrefix string)
 
 // 调度器控制
-func (c *Crontab) Start() *Crontab
+func (c *Crontab) Start()
 func (c *Crontab) Stop()
 func (c *Crontab) Reload()
 

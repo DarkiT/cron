@@ -68,9 +68,7 @@ type task struct {
 }
 
 // Start 启动定时任务管理器
-// 返回：
-//   - *Crontab: 返回当前实例，支持链式调用
-func (c *Crontab) Start() *Crontab {
+func (c *Crontab) Start() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -78,7 +76,6 @@ func (c *Crontab) Start() *Crontab {
 		c.isRunning = true
 		c.scheduler.Start()
 	}
-	return c
 }
 
 // Reload 重新加载所有任务
@@ -260,6 +257,33 @@ func (c *Crontab) NextRuntime(name string) (time.Time, error) {
 	return nextTime, nil
 }
 
+// ListJobs 返回所有注册的任务名称
+func (c *Crontab) ListJobs() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var jobs []string
+	for name := range c.scheduler.tasks {
+		jobs = append(jobs, name)
+	}
+	return jobs
+}
+
+// GetJobStatus 返回任务的当前状态
+// 参数：
+//   - name: 要获取的任务名称
+func (c *Crontab) GetJobStatus(name string) (bool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	job, exists := c.scheduler.tasks[name]
+	if !exists {
+		return false, fmt.Errorf("job %s not found", name)
+	}
+
+	return atomic.LoadInt32(&job.running) > 0, nil
+}
+
 // StopService 停止指定名称的任务
 // 参数：
 //   - name: 要停止的任务名称列表
@@ -280,29 +304,4 @@ func (c *Crontab) StopServicePrefix(namePrefix string) {
 		return
 	}
 	c.scheduler.StopServicePrefix(namePrefix)
-}
-
-// ListJobs 返回所有注册的任务名称
-func (c *Crontab) ListJobs() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	var jobs []string
-	for name := range c.scheduler.tasks {
-		jobs = append(jobs, name)
-	}
-	return jobs
-}
-
-// GetJobStatus 返回任务的当前状态
-func (c *Crontab) GetJobStatus(name string) (bool, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	job, exists := c.scheduler.tasks[name]
-	if !exists {
-		return false, fmt.Errorf("job %s not found", name)
-	}
-
-	return atomic.LoadInt32(&job.running) > 0, nil
 }

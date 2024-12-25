@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-)
 
-// 从 robfig/cron 复制 crontab 解析器到 crontab.cron_parser.go
+	"github.com/darkit/cron/internal/parser"
+)
 
 var (
 	ErrNotFoundJob     = errors.New("job not found")
@@ -400,28 +400,7 @@ func (j *jobModel) runWithTryCatch() {
 
 // 获取下次执行时间
 func getNextDue(spec string) (time.Time, error) {
-	// 标准化 cron 表达式
-	normalizedSpec := normalizeCronExpr(spec)
+	sc, err := parser.NewParser(parser.Second | parser.Minute | parser.Hour | parser.Dom | parser.Month | parser.Dow).Parse(spec)
 
-	sc, err := Parse(normalizedSpec)
-	if err != nil {
-		return time.Now(), err
-	}
-
-	due := sc.Next(time.Now())
-	return due, err
-}
-
-// 处理 crontab 表达式，自动处理 5 段语法
-func normalizeCronExpr(spec string) string {
-	fields := strings.Fields(spec)
-	if len(fields) == 5 {
-		// 5段语法，在前面补充 "0" 作为秒位
-		return "0 " + spec
-	}
-	if len(fields) == 6 {
-		// 6段语法，原样返回
-		return spec
-	}
-	return spec // 错误的表达式会在后续解析时报错
+	return sc.Next(time.Now()), err
 }
