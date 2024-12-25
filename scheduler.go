@@ -53,6 +53,38 @@ type cronScheduler struct {
 	mu           sync.RWMutex         // 读写锁
 }
 
+// Start - 启动所有任务，仅执行一次
+func (c *cronScheduler) Start() {
+	c.once.Do(func() {
+		for _, job := range c.tasks {
+			c.wg.Add(1)
+			job.runLoop(c.wg)
+		}
+	})
+}
+
+// Stop - 停止所有任务
+func (c *cronScheduler) Stop() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name, job := range c.tasks {
+		job.kill()
+		delete(c.tasks, name)
+	}
+	c.cancel()
+}
+
+// Wait - 等待所有任务退出
+func (c *cronScheduler) Wait() {
+	c.wg.Wait()
+}
+
+// WaitStop - 等待调度器停止
+func (c *cronScheduler) WaitStop() {
+	<-c.ctx.Done()
+}
+
 // Register 注册一个新任务，但不会立即启动
 // 参数：
 //   - name: 任务名称
@@ -74,6 +106,81 @@ func (c *cronScheduler) UpdateJobModel(name string, model *jobModel) error {
 // DynamicRegister - 运行时动态添加任务，任务会自动启动
 func (c *cronScheduler) DynamicRegister(name string, model *jobModel) error {
 	return c.reset(name, model, false, true)
+}
+
+// UnRegister - 停止并删除任务
+func (c *cronScheduler) UnRegister(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	oldModel, ok := c.tasks[name]
+	if !ok {
+		return ErrNotFoundJob
+	}
+
+	oldModel.kill()
+	delete(c.tasks, name)
+	return nil
+}
+
+// StopService - 停止指定名称的任务
+func (c *cronScheduler) StopService(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	job, ok := c.tasks[name]
+	if !ok {
+		return
+	}
+
+	job.kill()
+	delete(c.tasks, name)
+}
+
+// StopServicePrefix - 停止所有符合前缀的任务
+func (c *cronScheduler) StopServicePrefix(regex string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for name, job := range c.tasks {
+		if !strings.HasPrefix(name, regex) {
+			continue
+		}
+
+		job.kill()
+		delete(c.tasks, name)
+	}
+}
+
+// GetServiceCron - 获取指定名称的任务
+func (c *cronScheduler) GetServiceCron(name string) (*jobModel, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	oldModel, ok := c.tasks[name]
+	if !ok {
+		return nil, ErrNotFoundJob
+	}
+
+	return oldModel, nil
+}
+
+// GetServiceStatus - 获取指定任务的运行状态
+func (c *cronScheduler) GetServiceStatus(name string) (bool, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	oldModel, ok := c.tasks[name]
+	if !ok {
+		return false, ErrNotFoundJob
+	}
+
+	return oldModel.running > 0, nil
+}
+
+// SetPanicHandler - 设置 panic 处理器
+func (c *cronScheduler) SetPanicHandler(handler PanicHandler) {
+	c.panicHandler = handler
 }
 
 // reset - 重置任务
@@ -108,100 +215,6 @@ func (c *cronScheduler) reset(name string, model *jobModel, denyReplace, autoSta
 	}
 
 	return nil
-}
-
-// UnRegister - 停止并删除任务
-func (c *cronScheduler) UnRegister(name string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	oldModel, ok := c.tasks[name]
-	if !ok {
-		return ErrNotFoundJob
-	}
-
-	oldModel.kill()
-	delete(c.tasks, name)
-	return nil
-}
-
-// Stop - 停止所有任务
-func (c *cronScheduler) Stop() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for name, job := range c.tasks {
-		job.kill()
-		delete(c.tasks, name)
-	}
-	c.cancel()
-}
-
-// StopService - 停止指定名称的任务
-func (c *cronScheduler) StopService(name string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	job, ok := c.tasks[name]
-	if !ok {
-		return
-	}
-
-	job.kill()
-	delete(c.tasks, name)
-}
-
-// StopServicePrefix - 停止所有符合前缀的任务
-func (c *cronScheduler) StopServicePrefix(regex string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for name, job := range c.tasks {
-		if !strings.HasPrefix(name, regex) {
-			continue
-		}
-
-		job.kill()
-		delete(c.tasks, name)
-	}
-}
-
-// Start - 启动所有任务，仅执行一次
-func (c *cronScheduler) Start() {
-	c.once.Do(func() {
-		for _, job := range c.tasks {
-			c.wg.Add(1)
-			job.runLoop(c.wg)
-		}
-	})
-}
-
-// Wait - 等待所有任务退出
-func (c *cronScheduler) Wait() {
-	c.wg.Wait()
-}
-
-// WaitStop - 等待调度器停止
-func (c *cronScheduler) WaitStop() {
-	<-c.ctx.Done()
-}
-
-// GetServiceCron - 获取指定名称的任务
-func (c *cronScheduler) GetServiceCron(name string) (*jobModel, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	oldModel, ok := c.tasks[name]
-	if !ok {
-		return nil, ErrNotFoundJob
-	}
-
-	return oldModel, nil
-}
-
-// SetPanicHandler - 设置 panic 处理器
-func (c *cronScheduler) SetPanicHandler(handler PanicHandler) {
-	c.panicHandler = handler
 }
 
 // NewJobModel 创建任务模型

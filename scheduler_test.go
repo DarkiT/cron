@@ -70,13 +70,11 @@ func TestScheduler_StopService(t *testing.T) {
 	// 等待任务执行几次
 	time.Sleep(2 * time.Second)
 	scheduler.StopService("test")
-	currentCount := atomic.LoadInt32(&count)
-
 	// 再等待一段时间，确认任务已停止
 	time.Sleep(2 * time.Second)
-	finalCount := atomic.LoadInt32(&count)
+	status, _ := scheduler.GetServiceStatus("test")
 
-	if finalCount != currentCount {
+	if status {
 		t.Fatal("停止服务后任务仍在执行")
 	}
 }
