@@ -17,13 +17,35 @@ var (
 	ErrNotFoundJob     = errors.New("job not found")
 	ErrAlreadyRegister = errors.New("job already exists")
 	ErrJobDOFuncNil    = errors.New("callback function is nil")
+	ErrInvalidSpec     = errors.New("invalid cron specification")
 )
 
+// 定义日志接口适配器
+type loggerAdapter struct {
+	logger *slog.Logger
+}
+
+func (l *loggerAdapter) Debug(msg string) {
+	l.logger.Debug(msg)
+}
+
+func (l *loggerAdapter) Info(msg string) {
+	l.logger.Info(msg)
+}
+
+func (l *loggerAdapter) Warn(msg string) {
+	l.logger.Warn(msg)
+}
+
+func (l *loggerAdapter) Error(msg string) {
+	l.logger.Error(msg)
+}
+
 // 设置默认的日志记录器
-var defaultLogger = slog.Default()
+var defaultLogger Logger = &loggerAdapter{logger: slog.Default()}
 
 // SetLogger 允许用户设置自定义日志记录器
-func SetLogger(logger *slog.Logger) {
+func SetLogger(logger Logger) {
 	if logger != nil {
 		defaultLogger = logger
 	}
@@ -219,10 +241,17 @@ func (c *cronScheduler) reset(name string, model *jobModel, denyReplace, autoSta
 
 // NewJobModel 创建任务模型
 func NewJobModel(spec string, fn func(), opts ...JobOption) (*jobModel, error) {
+	// 解析cron表达式并缓存
+	schedule, err := parser.NewParser(parser.Second | parser.Minute | parser.Hour | parser.Dom | parser.Month | parser.Dow).Parse(spec)
+	if err != nil {
+		return nil, ErrInvalidSpec
+	}
+
 	job := &jobModel{
-		spec:    spec,
-		do:      fn,
-		running: 1,
+		spec:     spec,
+		do:       fn,
+		running:  1,
+		schedule: schedule, // 存储解析后的表达式
 	}
 
 	// 应用选项
@@ -235,17 +264,20 @@ func NewJobModel(spec string, fn func(), opts ...JobOption) (*jobModel, error) {
 
 // jobModel 定义任务模型
 type jobModel struct {
-	name          string // 任务名称
-	spec          string // cron 表达式
-	do            func() // 执行函数
-	async         bool   // 是否异步执行
-	tryCatch      bool   // 是否进行异常捕获
+	name          string                // 任务名称
+	spec          string                // cron 表达式
+	schedule      parser.Schedule       // 解析后的cron表达式
+	do            func()                // 执行函数
+	doWithContext func(context.Context) // 支持上下文的执行函数
+	async         bool                  // 是否异步执行
+	tryCatch      bool                  // 是否进行异常捕获
 	ctx           context.Context
 	cancel        context.CancelFunc
 	scheduler     *cronScheduler
 	maxConcurrent int           // 最大并发数
 	running       int32         // 当前运行的任务数
 	timeout       time.Duration // 任务超时时间
+	queue         chan struct{} // 并发控制队列
 }
 
 // SetTryCatch 设置是否启用异常捕获
@@ -258,14 +290,26 @@ func (j *jobModel) SetAsyncMode(b bool) {
 	j.async = b
 }
 
+// SetMaxConcurrent 设置最大并发数并初始化队列
+func (j *jobModel) SetMaxConcurrent(n int) {
+	j.maxConcurrent = n
+	if n > 0 {
+		j.queue = make(chan struct{}, n)
+	}
+}
+
 // 验证任务模型的有效性
 func (j *jobModel) validate() error {
 	if j.do == nil {
 		return ErrJobDOFuncNil
 	}
 
-	if _, err := getNextDue(j.spec); err != nil {
-		return err
+	if j.schedule == nil {
+		schedule, err := parser.NewParser(parser.Second | parser.Minute | parser.Hour | parser.Dom | parser.Month | parser.Dow).Parse(j.spec)
+		if err != nil {
+			return ErrInvalidSpec
+		}
+		j.schedule = schedule
 	}
 
 	return nil
@@ -281,9 +325,9 @@ func (j *jobModel) run(wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// 获取下一次执行时间
-	nextTime, err := getNextDue(j.spec)
-	if err != nil {
-		defaultLogger.Error(fmt.Sprintf("Failed to get next due time: %v", err))
+	nextTime := j.schedule.Next(time.Now())
+	if nextTime.IsZero() {
+		defaultLogger.Error(fmt.Sprintf("Failed to get next execution time, job [%s] exited", j.name))
 		return
 	}
 
@@ -296,7 +340,7 @@ func (j *jobModel) run(wg *sync.WaitGroup) {
 	for atomic.LoadInt32(&j.running) > 0 {
 		select {
 		case <-timer.C:
-			defaultLogger.Debug(fmt.Sprintf("Job [%s] executing", j.name))
+			defaultLogger.Debug(fmt.Sprintf("Executing job [%s]", j.name))
 
 			// 执行任务
 			if j.async {
@@ -306,10 +350,10 @@ func (j *jobModel) run(wg *sync.WaitGroup) {
 			}
 
 			// 计算下一次执行时间
-			nextTime, err = getNextDue(j.spec)
-			if err != nil {
-				defaultLogger.Error(fmt.Sprintf("Failed to get next due time: %v", err))
-				continue
+			nextTime = j.schedule.Next(time.Now())
+			if nextTime.IsZero() {
+				defaultLogger.Error(fmt.Sprintf("Failed to get next execution time, job [%s] exited", j.name))
+				return
 			}
 
 			// 重置定时器
@@ -343,6 +387,18 @@ func (j *jobModel) runWithTryCatch() {
 			))
 			return
 		}
+
+		// 使用缓冲队列控制并发，而不是简单丢弃
+		select {
+		case j.queue <- struct{}{}:
+			// 成功进入队列
+			defer func() { <-j.queue }()
+		default:
+			// 队列已满，任务等待
+			defaultLogger.Info(fmt.Sprintf("Job [%s] waiting in queue", j.name))
+			j.queue <- struct{}{} // 阻塞直到有空位
+			defer func() { <-j.queue }()
+		}
 	}
 
 	// 增加运行计数
@@ -357,7 +413,8 @@ func (j *jobModel) runWithTryCatch() {
 
 	go func() {
 		// 执行任务
-		defaultLogger.Info(fmt.Sprintf("Executing job [%s]", j.name))
+		startTime := time.Now()
+		defaultLogger.Info(fmt.Sprintf("Starting execution of job [%s]", j.name))
 
 		finished := make(chan struct{})
 		go func() {
@@ -365,18 +422,34 @@ func (j *jobModel) runWithTryCatch() {
 				if r := recover(); r != nil && j.tryCatch {
 					if j.scheduler != nil && j.scheduler.panicHandler != nil {
 						j.scheduler.panicHandler.Handle(j.name, r)
+					} else {
+						defaultLogger.Error(fmt.Sprintf("Job [%s] panicked: %v", j.name, r))
 					}
 				}
 				close(done)
 			}()
 			defer close(finished)
-			j.do()
+
+			// 优先使用支持上下文的函数
+			if j.doWithContext != nil {
+				// 创建一个可以传递超时的上下文
+				execCtx := ctx
+				if j.timeout > 0 {
+					var cancel context.CancelFunc
+					execCtx, cancel = context.WithTimeout(ctx, j.timeout)
+					defer cancel()
+				}
+				j.doWithContext(execCtx)
+			} else if j.do != nil {
+				j.do()
+			}
 		}()
 
 		// 等待任务完成或上下文取消
 		select {
 		case <-finished:
-			defaultLogger.Info(fmt.Sprintf("Job [%s] execution completed", j.name))
+			elapsed := time.Since(startTime)
+			defaultLogger.Info(fmt.Sprintf("Job [%s] execution completed, duration: %v", j.name, elapsed))
 		case <-ctx.Done():
 			defaultLogger.Error(fmt.Sprintf("Job [%s] cancelled", j.name))
 		}
@@ -384,13 +457,19 @@ func (j *jobModel) runWithTryCatch() {
 
 	// 处理超时
 	if j.timeout > 0 {
+		timer := time.NewTimer(j.timeout)
+		defer timer.Stop()
+
 		select {
 		case <-done:
-			// 任务正常完成
-		case <-time.After(j.timeout):
+			// 任务正常完成，确保定时器资源被释放
+			if !timer.Stop() {
+				<-timer.C
+			}
+		case <-timer.C:
 			// 超时，取消任务
 			cancel()
-			defaultLogger.Error(fmt.Sprintf("Job [%s] timeout", j.name))
+			defaultLogger.Error(fmt.Sprintf("Job [%s] timed out (%v)", j.name, j.timeout))
 			<-done // 等待任务真正结束
 		}
 	} else {
@@ -401,6 +480,8 @@ func (j *jobModel) runWithTryCatch() {
 // 获取下次执行时间
 func getNextDue(spec string) (time.Time, error) {
 	sc, err := parser.NewParser(parser.Second | parser.Minute | parser.Hour | parser.Dom | parser.Month | parser.Dow).Parse(spec)
-
-	return sc.Next(time.Now()), err
+	if err != nil {
+		return time.Time{}, err
+	}
+	return sc.Next(time.Now()), nil
 }

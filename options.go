@@ -1,6 +1,9 @@
 package cron
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // PanicHandler 定义处理 panic 的函数类型
 type PanicHandler interface {
@@ -26,6 +29,15 @@ func WithPanicHandler(handler PanicHandler) Option {
 				job.tryCatch = true
 			}
 			c.scheduler.mu.Unlock()
+		}
+	}
+}
+
+// WithLogger 设置自定义日志记录器
+func WithLogger(logger Logger) Option {
+	return func(c *Crontab) {
+		if logger != nil {
+			SetLogger(logger)
 		}
 	}
 }
@@ -78,5 +90,46 @@ func WithTimeout(timeout time.Duration) JobOption {
 func WithMaxConcurrent(maxConcurrent int) JobOption {
 	return func(j *jobModel) {
 		j.maxConcurrent = maxConcurrent
+		// 初始化队列
+		if maxConcurrent > 0 {
+			j.queue = make(chan struct{}, maxConcurrent)
+		}
 	}
+}
+
+// WithContextFunc 设置支持上下文的执行函数
+// 参数：
+//   - fn: 接收上下文的执行函数
+//
+// 返回：
+//   - JobOption: 返回一个任务选项函数
+func WithContextFunc(fn func(ctx context.Context)) JobOption {
+	return func(j *jobModel) {
+		if fn != nil {
+			j.doWithContext = fn
+			j.do = func() {
+				// 创建可取消的上下文
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				// 如果设置了超时，添加超时控制
+				if j.timeout > 0 {
+					var ctxWithTimeout context.Context
+					ctxWithTimeout, cancel = context.WithTimeout(ctx, j.timeout)
+					defer cancel()
+					ctx = ctxWithTimeout
+				}
+
+				fn(ctx)
+			}
+		}
+	}
+}
+
+// Logger 定义了日志接口
+type Logger interface {
+	Debug(msg string)
+	Info(msg string)
+	Warn(msg string)
+	Error(msg string)
 }

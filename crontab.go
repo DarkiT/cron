@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -31,8 +32,28 @@ type CronJob interface {
 	// Rule 返回任务的 cron 表达式
 	Rule() string
 
-	// Execute 返回任务的执行函数
+	// Execute 执行任务
 	Execute()
+}
+
+// CronJobWithContext 定义了支持上下文的任务接口
+// 实现此接口的任务可以感知取消信号和超时
+type CronJobWithContext interface {
+	// Name 返回任务的唯一标识名称
+	Name() string
+
+	// Rule 返回任务的 cron 表达式
+	Rule() string
+
+	// ExecuteWithContext 接收上下文执行任务
+	ExecuteWithContext(ctx context.Context)
+}
+
+// 存储任务信息的内部结构
+type taskInfo struct {
+	name string
+	spec string
+	fn   func()
 }
 
 // Crontab 定义了定时任务管理器的主要结构
@@ -40,6 +61,7 @@ type Crontab struct {
 	scheduler *cronScheduler
 	isRunning bool
 	mu        sync.RWMutex
+	tasks     map[string]taskInfo // 用于替代全局的fns变量
 }
 
 // New 创建一个新的定时任务管理器
@@ -50,6 +72,7 @@ type Crontab struct {
 func New(opts ...Option) *Crontab {
 	c := &Crontab{
 		scheduler: NewCronScheduler(),
+		tasks:     make(map[string]taskInfo),
 	}
 
 	for _, opt := range opts {
@@ -57,14 +80,6 @@ func New(opts ...Option) *Crontab {
 	}
 
 	return c
-}
-
-var fns = make(map[string]task)
-
-type task struct {
-	name string
-	spec string
-	fn   func()
 }
 
 // Start 启动定时任务管理器
@@ -80,8 +95,16 @@ func (c *Crontab) Start() {
 
 // Reload 重新加载所有任务
 func (c *Crontab) Reload() {
+	c.mu.Lock()
+	tasksCopy := make(map[string]taskInfo)
+	for k, v := range c.tasks {
+		tasksCopy[k] = v
+	}
+	c.mu.Unlock()
+
 	c.Stop()
-	for _, v := range fns {
+
+	for _, v := range tasksCopy {
 		c.AddFunc(v.name, v.spec, v.fn)
 	}
 	c.Start()
@@ -118,6 +141,13 @@ func (c *Crontab) Stop() {
 func (c *Crontab) AddJob(config JobConfig, fn func()) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// 存储任务信息
+	c.tasks[config.Name] = taskInfo{
+		name: config.Name,
+		spec: config.Schedule,
+		fn:   fn,
+	}
 
 	// 设置默认值
 	if config.Async && config.MaxConcurrent <= 0 {
@@ -158,6 +188,13 @@ func (c *Crontab) UpdateJob(config JobConfig, fn func()) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	// 更新任务信息
+	c.tasks[config.Name] = taskInfo{
+		name: config.Name,
+		spec: config.Schedule,
+		fn:   fn,
+	}
+
 	// 先停止旧任务
 	c.scheduler.StopService(config.Name)
 
@@ -192,8 +229,17 @@ func (c *Crontab) UpdateJob(config JobConfig, fn func()) error {
 //   - error: 如果添加失败则返回错误
 func (c *Crontab) AddFunc(name, spec string, fn func()) error {
 	if fn == nil {
-		return fmt.Errorf("not fond task cmd")
+		return fmt.Errorf("task function not found")
 	}
+
+	// 存储任务信息
+	c.mu.Lock()
+	c.tasks[name] = taskInfo{
+		name: name,
+		spec: spec,
+		fn:   fn,
+	}
+	c.mu.Unlock()
 
 	job, err := NewJobModel(spec, fn)
 	if err != nil {
@@ -219,6 +265,40 @@ func (c *Crontab) AddJobInterface(job CronJob) error {
 		Name:     job.Name(),
 		Schedule: job.Rule(),
 		TryCatch: true,
+	}
+
+	// 检查是否实现了支持上下文的接口
+	if jobWithCtx, ok := job.(CronJobWithContext); ok {
+		// 使用支持上下文的接口
+		ctxJob := func(ctx context.Context) {
+			defaultLogger.Info(fmt.Sprintf("Starting execution of job [%s]", job.Name()))
+			jobWithCtx.ExecuteWithContext(ctx)
+			defaultLogger.Info(fmt.Sprintf("Completed execution of job [%s]", job.Name()))
+		}
+
+		// 创建任务模型
+		jobModel, err := NewJobModel(config.Schedule, nil)
+		if err != nil {
+			return err
+		}
+
+		// 应用任务选项
+		WithContextFunc(ctxJob)(jobModel)
+
+		// 存储任务信息
+		c.mu.Lock()
+		c.tasks[config.Name] = taskInfo{
+			name: config.Name,
+			spec: config.Schedule,
+			fn:   func() { ctxJob(context.Background()) },
+		}
+		c.mu.Unlock()
+
+		// 注册任务
+		if c.isRunning {
+			return c.scheduler.DynamicRegister(config.Name, jobModel)
+		}
+		return c.scheduler.Register(config.Name, jobModel)
 	}
 
 	// 使用闭包捕获 job 变量
@@ -304,4 +384,23 @@ func (c *Crontab) StopServicePrefix(namePrefix string) {
 		return
 	}
 	c.scheduler.StopServicePrefix(namePrefix)
+}
+
+// Register 直接注册一个任务模型
+// 参数：
+//   - name: 任务名称
+//   - job: 任务模型
+//
+// 返回：
+//   - error: 如果注册失败则返回错误
+func (c *Crontab) Register(name string, job *jobModel) error {
+	c.mu.Lock()
+	c.tasks[name] = taskInfo{
+		name: name,
+		spec: job.spec,
+		fn:   job.do,
+	}
+	c.mu.Unlock()
+
+	return c.scheduler.Register(name, job)
 }

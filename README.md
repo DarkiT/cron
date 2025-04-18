@@ -8,14 +8,18 @@
 
 ## 特性
 
-- 支持标准的 crontab 表达式（5段/6段语法）
-- 自动处理分钟级的5段语法（秒位补0）
-- 支持同步/异步任务执行
-- 内置 panic 捕获机制
-- 支持动态添加/更新/删除任务
-- 支持任务接口实现
-- 完善的日志记录
-- 优雅的停止机制
+- **支持标准的 crontab 表达式（5段/6段语法）**
+- **自动处理分钟级的5段语法（秒位补0）**
+- **支持同步/异步任务执行**
+- **内置 panic 捕获机制**
+- **支持动态添加/更新/删除任务**
+- **支持任务接口实现**
+- **完善的日志记录**
+- **优雅的停止机制**
+- **支持 Context 上下文感知的任务**
+- **改进的并发控制机制**
+- **缓存解析的 cron 表达式，提高性能**
+- **可自定义日志接口**
 
 ## 安装
 
@@ -156,6 +160,84 @@ scheduler.AddJob(cron.JobConfig{
 })
 ```
 
+### 上下文支持
+
+#### 1. 支持 Context 的任务接口
+
+现在可以实现 `CronJobWithContext` 接口，使任务能够感知取消信号和超时：
+
+```go
+type MyContextJob struct {
+    name string
+}
+
+func (j *MyContextJob) Name() string { return j.name }
+func (j *MyContextJob) Rule() string { return "*/5 * * * * *" }
+
+// 实现支持上下文的接口方法
+func (j *MyContextJob) ExecuteWithContext(ctx context.Context) {
+    // 检查取消信号
+    select {
+    case <-time.After(2 * time.Second):
+        fmt.Println("任务完成")
+    case <-ctx.Done():
+        fmt.Println("任务被取消:", ctx.Err())
+        return
+    }
+}
+
+// 添加任务 (自动检测并使用 ExecuteWithContext 方法)
+scheduler.AddJobInterface(&MyContextJob{name: "context-aware-job"})
+```
+
+#### 2. 使用 WithContextFunc 创建支持 Context 的任务
+
+```go
+jobModel, _ := cron.NewJobModel("*/5 * * * * *", nil,
+    cron.WithContextFunc(func(ctx context.Context) {
+        select {
+        case <-time.After(2 * time.Second):
+            fmt.Println("任务完成")
+        case <-ctx.Done():
+            fmt.Println("任务被取消:", ctx.Err())
+        }
+    }),
+    cron.WithTimeout(5 * time.Second),
+)
+scheduler.Register("context-job", jobModel)
+```
+
+#### 3. 自定义日志接口
+
+```go
+// 实现Logger接口
+type MyCustomLogger struct{}
+
+func (l *MyCustomLogger) Debug(msg string) { fmt.Println("[DEBUG]", msg) }
+func (l *MyCustomLogger) Info(msg string)  { fmt.Println("[INFO]", msg) }
+func (l *MyCustomLogger) Warn(msg string)  { fmt.Println("[WARN]", msg) }
+func (l *MyCustomLogger) Error(msg string) { fmt.Println("[ERROR]", msg) }
+
+// 使用自定义日志
+scheduler := cron.New(cron.WithLogger(&MyCustomLogger{}))
+```
+
+#### 4. 改进的并发控制
+
+新版本使用缓冲队列控制并发，而不是简单丢弃超出限制的任务：
+
+```go
+scheduler.AddJob(cron.JobConfig{
+    Name:          "queue-job",
+    Schedule:      "*/2 * * * * *",
+    Async:         true,
+    MaxConcurrent: 2,  // 最多同时运行2个任务
+}, func() {
+    // 如果已有2个任务运行，新任务会等待而不是被丢弃
+    time.Sleep(5 * time.Second)
+})
+```
+
 ### JobConfig 完整配置项
 ```go
 type JobConfig struct {
@@ -174,10 +256,16 @@ type JobConfig struct {
    - 设置 `Async: true` 启用异步执行
    - 使用 `MaxConcurrent` 控制并发数
    - 设置合理的 `Timeout` 避免任务阻塞
+   - 优先使用支持 Context 的任务接口
 
 2. 对于关键任务：
    - 启用 `TryCatch` 捕获异常
    - 使用 `NextRuntime` 监控执行计划
+   - 实现自定义 `PanicHandler` 处理异常
+
+3. 性能优化：
+   - 尽可能复用任务实例，而不是频繁创建
+   - 使用 `WithContextFunc` 替代普通函数可获得更好的控制
 
 ## Crontab 表达式
 
@@ -204,22 +292,39 @@ type JobConfig struct {
 ```go
 // 任务配置
 type JobConfig struct {
-    Name     string // 任务名称
-    Schedule string // 定时规则
-    Async    bool   // 是否异步执行
-    TryCatch bool   // 是否进行异常捕获
+    Name          string        // 任务名称
+    Schedule      string        // 定时规则
+    Async         bool          // 是否异步执行
+    TryCatch      bool          // 是否进行异常捕获
+    Timeout       time.Duration // 任务超时时间
+    MaxConcurrent int           // 最大并发数
 }
 
-// 任务接口
+// 标准任务接口
 type CronJob interface {
     Name() string     // 返回任务名称
     Rule() string     // 返回cron表达式
-    Execute()         // 返回执行函数
+    Execute()         // 执行任务
+}
+
+// 支持上下文的任务接口
+type CronJobWithContext interface {
+    Name() string     // 返回任务名称
+    Rule() string     // 返回cron表达式
+    ExecuteWithContext(ctx context.Context) // 接收上下文执行任务
 }
 
 // Panic处理接口
 type PanicHandler interface {
     Handle(jobName string, err interface{})
+}
+
+// 日志接口
+type Logger interface {
+    Debug(msg string)
+    Info(msg string)
+    Warn(msg string)
+    Error(msg string)
 }
 ```
 
@@ -232,7 +337,7 @@ func New(opts ...Option) *Crontab
 // 添加任务的多种方式
 func (c *Crontab) AddJob(config JobConfig, fn func()) error
 func (c *Crontab) AddFunc(name, spec string, fn func()) error
-func (c *Crontab) AddJobInterface(jobs ...CronJob) error
+func (c *Crontab) AddJobInterface(job CronJob) error
 
 // 更新任务
 func (c *Crontab) UpdateJob(config JobConfig, fn func()) error
@@ -249,17 +354,6 @@ func (c *Crontab) Reload()
 // 任务信息
 func (c *Crontab) NextRuntime(name string) (time.Time, error)
 ```
-
-## 最佳实践
-
-1. 任务命名建议使用有意义的名称，便于管理和调试
-2. 长时间运行的任务建议使用 `Async: true`
-3. 可能发生panic的任务建议使用 `TryCatch: true`
-4. 任务执行时间不应超过调度间隔
-5. 在生产环境中建议设置 panic 处理器
-6. 使用 `StopServicePrefix` 可以批量管理相关任务
-7. 使用 `NextRuntime` 可以预判任务执行时间
-8. 对于不需要秒级精度的任务，推荐使用5段语法
 
 ## 许可证
 

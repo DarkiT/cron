@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,7 +40,7 @@ func TestCrontab_Basic(t *testing.T) {
 	// 测试添加任务
 	err := scheduler.AddFunc("test1", "*/1 * * * * *", func() {})
 	if err != nil {
-		t.Fatalf("添加任务失败: %v", err)
+		t.Fatalf("Failed to add job: %v", err)
 	}
 
 	// 测试启动调度器
@@ -53,13 +54,13 @@ func TestCrontab_Basic(t *testing.T) {
 		// 返回空函数
 	})
 	if err != nil {
-		t.Fatalf("更新任务失败: %v", err)
+		t.Fatalf("Failed to update job: %v", err)
 	}
 
 	// 测试获取下次执行时间
 	nextTime, err := scheduler.NextRuntime("test1")
 	if err != nil || nextTime.IsZero() {
-		t.Fatalf("获取下次执行时间失败: %v", err)
+		t.Fatalf("Failed to get next runtime: %v", err)
 	}
 
 	// 测试停止任务
@@ -82,7 +83,7 @@ func TestCrontab_PanicHandler(t *testing.T) {
 		Schedule: "*/1 * * * * *",
 		TryCatch: true,
 	}, func() {
-		panic("测试panic")
+		panic("test panic")
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +95,7 @@ func TestCrontab_PanicHandler(t *testing.T) {
 	case <-panicCaught:
 		// panic 被正确捕获
 	case <-time.After(2 * time.Second):
-		t.Fatal("panic处理器没有捕获到panic")
+		t.Fatal("Panic handler did not catch the panic")
 	}
 
 	scheduler.Stop()
@@ -126,7 +127,7 @@ func TestCrontab_CronJob(t *testing.T) {
 		for _, task := range tasks {
 			t.Logf("Task %s is registered but not executed", task)
 		}
-		t.Fatal("任务没有被执行")
+		t.Fatal("Job was not executed")
 	}
 
 	scheduler.Stop()
@@ -135,6 +136,10 @@ func TestCrontab_CronJob(t *testing.T) {
 func TestCrontab_AsyncConcurrent(t *testing.T) {
 	scheduler := New()
 	var executionCount int32 // 使用原子计数器
+	var maxConcurrentRunning int32
+	var mutex sync.Mutex
+	var wg sync.WaitGroup
+	allDone := make(chan struct{})
 
 	// 添加一个耗时的异步任务
 	err := scheduler.AddJob(JobConfig{
@@ -143,23 +148,61 @@ func TestCrontab_AsyncConcurrent(t *testing.T) {
 		Async:         true,
 		MaxConcurrent: 2, // 限制最大并发为2
 	}, func() {
-		atomic.AddInt32(&executionCount, 1) // 使用原子操作增加计数
-		time.Sleep(2 * time.Second)         // 模拟耗时任务
+		wg.Add(1)
+		defer wg.Done()
+
+		// 增加计数并记录最大并发数
+		current := atomic.AddInt32(&executionCount, 1)
+
+		// 增加当前运行计数
+		mutex.Lock()
+		running := atomic.AddInt32(&maxConcurrentRunning, 1)
+		mutex.Unlock()
+
+		t.Logf("Job #%d started, current running: %d", current, running)
+
+		// 模拟耗时任务
+		time.Sleep(1 * time.Second)
+
+		// 减少当前运行计数
+		mutex.Lock()
+		atomic.AddInt32(&maxConcurrentRunning, -1)
+		mutex.Unlock()
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// 监听所有任务完成
+	go func() {
+		wg.Wait()
+		close(allDone)
+	}()
+
 	scheduler.Start()
-	time.Sleep(5 * time.Second)
+
+	// 等待足够长的时间让任务执行
+	select {
+	case <-allDone:
+		// 所有任务已完成
+	case <-time.After(6 * time.Second):
+		// 超时保护
+	}
+
 	scheduler.Stop()
 
-	// 使用原子操作读取最终计数
+	// 等待所有任务完成
+	time.Sleep(2 * time.Second)
+
+	// 读取最终并发度
+	maxConcurrent := atomic.LoadInt32(&maxConcurrentRunning)
 	finalCount := atomic.LoadInt32(&executionCount)
 
-	// 由于最大并发限制为2，执行次数应该小于等于2
-	if finalCount > 2 {
-		t.Errorf("并发限制失效: 预期最大执行次数为2，实际执行了%d次", finalCount)
+	t.Logf("Max concurrent running: %d, total executed: %d", maxConcurrent, finalCount)
+
+	// 检查最大并发度是否符合预期
+	if maxConcurrent > 2 {
+		t.Errorf("Concurrency limit failed: expected max concurrent of 2, but got %d", maxConcurrent)
 	}
 }
 
@@ -189,7 +232,7 @@ func TestCrontab_Timeout(t *testing.T) {
 	case <-executing:
 		// 任务已开始执行
 	case <-time.After(2 * time.Second):
-		t.Fatal("任务没有开始执行")
+		t.Fatal("Job did not start execution")
 	}
 
 	// 等待一段时间，让超时生效
@@ -199,7 +242,7 @@ func TestCrontab_Timeout(t *testing.T) {
 	select {
 	case <-done:
 		// 如果收到完成信号，说明任务没有被正确中断
-		t.Error("任务应该因超时而被中断，但实际完成了执行")
+		t.Error("Job should have been interrupted by timeout, but it completed execution")
 	default:
 		// 没有收到完成信号，说明任务被正确中断
 	}

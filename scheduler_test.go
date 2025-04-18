@@ -24,7 +24,7 @@ func TestScheduler_Register(t *testing.T) {
 	// 测试重复注册
 	err = scheduler.Register("test", job)
 	if !errors.Is(err, ErrAlreadyRegister) {
-		t.Fatalf("期望错误 %v, 得到 %v", ErrAlreadyRegister, err)
+		t.Fatalf("expected error %v, got %v", ErrAlreadyRegister, err)
 	}
 }
 
@@ -50,7 +50,7 @@ func TestScheduler_DynamicRegister(t *testing.T) {
 	case <-executed:
 		// 任务成功执行
 	case <-time.After(2 * time.Second):
-		t.Fatal("动态注册的任务没有执行")
+		t.Fatal("dynamically registered job did not execute")
 	}
 
 	scheduler.Stop()
@@ -75,6 +75,6 @@ func TestScheduler_StopService(t *testing.T) {
 	status, _ := scheduler.GetServiceStatus("test")
 
 	if status {
-		t.Fatal("停止服务后任务仍在执行")
+		t.Fatal("job is still running after stopping the service")
 	}
 }

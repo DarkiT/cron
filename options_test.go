@@ -10,13 +10,13 @@ func TestJobOptions(t *testing.T) {
 		wantTry  bool
 	}{
 		{
-			name:     "默认选项",
+			name:     "Default Options",
 			options:  nil,
 			wantSync: false,
 			wantTry:  false,
 		},
 		{
-			name: "异步执行",
+			name: "Async Execution",
 			options: []JobOption{
 				WithAsync(true),
 			},
@@ -24,7 +24,7 @@ func TestJobOptions(t *testing.T) {
 			wantTry:  false,
 		},
 		{
-			name: "异常捕获",
+			name: "Panic Catching",
 			options: []JobOption{
 				WithTryCatch(true),
 			},
@@ -32,7 +32,7 @@ func TestJobOptions(t *testing.T) {
 			wantTry:  true,
 		},
 		{
-			name: "组合选项",
+			name: "Combined Options",
 			options: []JobOption{
 				WithAsync(true),
 				WithTryCatch(true),
