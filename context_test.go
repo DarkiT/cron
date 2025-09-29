@@ -2,211 +2,154 @@ package cron
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// 测试支持context的任务结构
-type testContextJob struct {
-	name      string
-	rule      string
-	executed  chan bool
-	cancelled chan bool
-	t         *testing.T
-}
+// TestWithContextBasic 测试 WithContext 基本功能
+func TestWithContextBasic(t *testing.T) {
+	// 创建一个5秒后取消的上下文
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
 
-func (j *testContextJob) Name() string { return j.name }
-func (j *testContextJob) Rule() string { return j.rule }
-func (j *testContextJob) Execute() {
-	j.t.Logf("Executing standard method for job [%s]", j.name)
-	j.executed <- true
-}
+	// 使用自定义上下文创建调度器
+	c := New(WithContext(ctx))
 
-func (j *testContextJob) ExecuteWithContext(ctx context.Context) {
-	j.t.Logf("Executing context-aware method for job [%s]", j.name)
-
-	select {
-	case <-time.After(2 * time.Second):
-		j.executed <- true
-		j.t.Logf("Job [%s] completed normally", j.name)
-	case <-ctx.Done():
-		j.cancelled <- true
-		j.t.Logf("Job [%s] was cancelled: %v", j.name, ctx.Err())
-	}
-}
-
-// 测试Context接口实现
-func TestCrontab_ContextJob(t *testing.T) {
-	scheduler := New()
-
-	executed := make(chan bool, 1)
-	cancelled := make(chan bool, 1)
-
-	job := &testContextJob{
-		name:      "context-job",
-		rule:      "*/1 * * * * *",
-		executed:  executed,
-		cancelled: cancelled,
-		t:         t,
-	}
-
-	err := scheduler.AddJobInterface(job)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	scheduler.Start()
-
-	select {
-	case <-executed:
-		t.Log("Context-aware job executed successfully")
-	case <-time.After(3 * time.Second):
-		t.Fatal("Context-aware job was not executed")
-	}
-
-	scheduler.Stop()
-}
-
-// 测试任务超时和Context取消
-func TestCrontab_ContextTimeout(t *testing.T) {
-	scheduler := New()
-
-	timeoutOccurred := make(chan bool, 1)
-
-	// 使用WithContextFunc创建支持Context的任务
-	jobModel, err := NewJobModel("*/1 * * * * *", nil,
-		WithContextFunc(func(ctx context.Context) {
-			// 启动一个协程检测上下文取消
-			go func() {
-				<-ctx.Done()
-				timeoutOccurred <- true
-			}()
-
-			// 睡眠时间超过任务超时时间
-			time.Sleep(3 * time.Second)
-		}),
-		WithTimeout(1*time.Second), // 设置1秒超时
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = scheduler.Register("timeout-context-job", jobModel)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	scheduler.Start()
-
-	// 等待超时发生
-	select {
-	case <-timeoutOccurred:
-		t.Log("Context timeout occurred as expected")
-	case <-time.After(5 * time.Second):
-		t.Fatal("Context timeout did not occur")
-	}
-
-	scheduler.Stop()
-}
-
-// 测试改进的并发控制队列
-func TestCrontab_ConcurrencyQueue(t *testing.T) {
-	scheduler := New()
-
-	maxConcurrent := 2
-	executionCount := int32(0)
-	startCount := int32(0)
-	completedCount := int32(0)
-
-	// 添加互斥锁保护计数
-	var mu sync.Mutex
-	activeCount := 0
-	maxActive := 0
-
-	// 同步完成，确保所有任务都有机会完成
-	var wg sync.WaitGroup
-	allDone := make(chan struct{})
-
-	// 设置一个执行时间较长的任务，以测试队列行为
-	err := scheduler.AddJob(JobConfig{
-		Name:          "queue-job",
-		Schedule:      "*/1 * * * * *",
-		Async:         true,
-		MaxConcurrent: maxConcurrent,
-	}, func() {
-		wg.Add(1)
-		defer wg.Done()
-
-		// 增加总执行计数
-		atomic.AddInt32(&executionCount, 1)
-
-		// 记录同时活跃的任务数量（使用互斥锁保护）
-		mu.Lock()
-		activeCount++
-		if activeCount > maxActive {
-			maxActive = activeCount
+	counter := int64(0)
+	err := c.Schedule("context-test", "*/10 * * * * *", func(taskCtx context.Context) {
+		atomic.AddInt64(&counter, 1)
+		// 验证传入的上下文会响应取消
+		select {
+		case <-time.After(200 * time.Millisecond): // 超过上下文超时时间
+			t.Error("Task should have been cancelled")
+		case <-taskCtx.Done():
+			// 正常，任务收到取消信号
 		}
-		current := atomic.AddInt32(&startCount, 1)
-		mu.Unlock()
-
-		t.Logf("Job started, current running: %d", current)
-
-		// 执行时间足够长，以确保多个任务在同一时间进入队列
-		time.Sleep(1 * time.Second)
-
-		// 记录完成的任务数
-		atomic.AddInt32(&completedCount, 1)
-
-		// 减少活跃计数
-		mu.Lock()
-		activeCount--
-		atomic.AddInt32(&startCount, -1)
-		mu.Unlock()
 	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Failed to schedule task: %v", err)
 	}
 
-	// 监听完成信号
-	go func() {
-		wg.Wait()
-		close(allDone)
-	}()
-
-	scheduler.Start()
-
-	// 等待足够长的时间，使多个任务有机会排队和执行
-	select {
-	case <-allDone:
-		// 所有任务已完成
-	case <-time.After(10 * time.Second):
-		// 超时保护
-		t.Log("Test timed out waiting for jobs to complete")
+	err = c.Start()
+	if err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
 	}
 
-	scheduler.Stop()
+	// 等待上下文超时
+	<-ctx.Done()
 
-	// 给所有正在运行的任务时间完成
-	time.Sleep(2 * time.Second)
+	// 给一点时间让调度器处理取消
+	time.Sleep(50 * time.Millisecond)
 
-	// 获取最终执行计数
-	finalExecution := atomic.LoadInt32(&executionCount)
-	finalCompleted := atomic.LoadInt32(&completedCount)
-
-	t.Logf("Total execution attempts: %d, completed: %d, max active: %d",
-		finalExecution, finalCompleted, maxActive)
-
-	// 检查最大同时活跃任务数是否遵守并发限制
-	if maxActive > maxConcurrent {
-		t.Errorf("Concurrency limit violated: maximum should be %d, but %d jobs were running concurrently",
-			maxConcurrent, maxActive)
+	// 调度器应该已经停止
+	if c.IsRunning() {
+		t.Error("Scheduler should have stopped when context was cancelled")
 	}
 
-	// 检查是否所有开始的任务都已完成
-	if finalExecution != finalCompleted {
-		t.Errorf("Not all started jobs completed: started %d, completed %d",
-			finalExecution, finalCompleted)
+	c.Stop() // 确保清理
+}
+
+// TestWithContextNil 测试传入 nil 上下文的情况
+func TestWithContextNil(t *testing.T) {
+	c := New(WithContext(nil)) // 传入 nil
+
+	counter := int64(0)
+	err := c.Schedule("nil-context-test", "*/10 * * * * *", func(ctx context.Context) {
+		atomic.AddInt64(&counter, 1)
+	})
+	if err != nil {
+		t.Fatalf("Failed to schedule task: %v", err)
+	}
+
+	err = c.Start()
+	if err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
+	defer c.Stop()
+
+	// 等待一小段时间确保任务可以正常执行
+	time.Sleep(20 * time.Millisecond)
+
+	// 调度器应该仍在运行（因为使用了 Background context）
+	if !c.IsRunning() {
+		t.Error("Scheduler should be running with nil context (defaults to Background)")
+	}
+}
+
+// TestWithContextCascadingCancel 测试级联取消
+func TestWithContextCascadingCancel(t *testing.T) {
+	// 父上下文
+	parentCtx, parentCancel := context.WithCancel(context.Background())
+	defer parentCancel()
+
+	// 子上下文（调度器使用）
+	childCtx, childCancel := context.WithCancel(parentCtx)
+	defer childCancel()
+
+	c := New(WithContext(childCtx))
+
+	taskExecuted := int64(0)
+	taskCancelled := int64(0)
+
+	err := c.Schedule("cascade-test", "*/10 * * * * *", func(taskCtx context.Context) {
+		atomic.AddInt64(&taskExecuted, 1)
+		select {
+		case <-time.After(200 * time.Millisecond):
+			// 不应该到这里
+		case <-taskCtx.Done():
+			atomic.AddInt64(&taskCancelled, 1)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Failed to schedule task: %v", err)
+	}
+
+	err = c.Start()
+	if err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
+
+	// 等一点时间
+	time.Sleep(20 * time.Millisecond)
+
+	// 取消父上下文，应该级联取消子上下文和调度器
+	parentCancel()
+
+	// 等待级联取消生效
+	time.Sleep(50 * time.Millisecond)
+
+	// 验证调度器已停止
+	if c.IsRunning() {
+		t.Error("Scheduler should have stopped when parent context was cancelled")
+	}
+
+	c.Stop() // 确保清理
+}
+
+// TestDefaultContextBehavior 测试默认行为（不使用 WithContext）
+func TestDefaultContextBehavior(t *testing.T) {
+	// 不使用 WithContext，应该使用默认的 Background context
+	c := New()
+
+	counter := int64(0)
+	err := c.Schedule("default-test", "*/10 * * * * *", func(ctx context.Context) {
+		atomic.AddInt64(&counter, 1)
+	})
+	if err != nil {
+		t.Fatalf("Failed to schedule task: %v", err)
+	}
+
+	err = c.Start()
+	if err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
+	defer c.Stop()
+
+	time.Sleep(20 * time.Millisecond)
+
+	// 应该正常运行
+	if !c.IsRunning() {
+		t.Error("Default scheduler should be running")
 	}
 }

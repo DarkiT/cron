@@ -93,70 +93,13 @@ func NewParser(options ParseOption) Parser {
 // It returns a descriptive error if the spec is not valid.
 // It accepts crontab specs and features configured by NewParser.
 func (p Parser) Parse(spec string) (Schedule, error) {
-	if len(spec) == 0 {
-		return nil, fmt.Errorf("empty spec string")
-	}
-
-	// Extract timezone if present
-	loc := time.Local
-	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
-		var err error
-		i := strings.Index(spec, " ")
-		eq := strings.Index(spec, "=")
-		if loc, err = time.LoadLocation(spec[eq+1 : i]); err != nil {
-			return nil, fmt.Errorf("provided bad location %s: %v", spec[eq+1:i], err)
-		}
-		spec = strings.TrimSpace(spec[i:])
-	}
-
-	// Handle named schedules (descriptors), if configured
-	if strings.HasPrefix(spec, "@") {
-		if p.options&Descriptor == 0 {
-			return nil, fmt.Errorf("parser does not accept descriptors: %v", spec)
-		}
-		return parseDescriptor(spec, loc)
-	}
-
-	// Split on whitespace.
-	fields := strings.Fields(spec)
-
-	// Validate & fill in any omitted or optional fields
-	var err error
-	fields, err = normalizeFields(fields, p.options)
+	// 使用缓存加速解析过程
+	schedule, err := parseWithCache(p, spec)
 	if err != nil {
 		return nil, err
 	}
 
-	field := func(field string, r bounds) uint64 {
-		if err != nil {
-			return 0
-		}
-		var bits uint64
-		bits, err = getField(field, r)
-		return bits
-	}
-
-	var (
-		second     = field(fields[0], seconds)
-		minute     = field(fields[1], minutes)
-		hour       = field(fields[2], hours)
-		dayofmonth = field(fields[3], dom)
-		month      = field(fields[4], months)
-		dayofweek  = field(fields[5], dow)
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &SpecSchedule{
-		Second:   second,
-		Minute:   minute,
-		Hour:     hour,
-		Dom:      dayofmonth,
-		Month:    month,
-		Dow:      dayofweek,
-		Location: loc,
-	}, nil
+	return schedule, nil
 }
 
 // normalizeFields takes a subset set of the time fields and returns the full set
@@ -313,8 +256,18 @@ func getRange(expr string, r bounds) (uint64, error) {
 	if start < r.min {
 		return 0, fmt.Errorf("beginning of range (%d) below minimum (%d): %s", start, r.min, expr)
 	}
+
+	// 特殊处理：周日可以用7表示，但内部仍使用0
+	if r.max == dow.max && start == 7 {
+		start = 0
+	}
 	if end > r.max {
-		return 0, fmt.Errorf("end of range (%d) above maximum (%d): %s", end, r.max, expr)
+		// 特殊处理：周日可以用7表示，但内部仍使用0
+		if r.max == dow.max && end == 7 {
+			end = 0
+		} else {
+			return 0, fmt.Errorf("end of range (%d) above maximum (%d): %s", end, r.max, expr)
+		}
 	}
 	if start > end {
 		return 0, fmt.Errorf("beginning of range (%d) beyond end of range (%d): %s", start, end, expr)
@@ -333,6 +286,14 @@ func parseIntOrName(expr string, names map[string]uint) (uint, error) {
 			return namedInt, nil
 		}
 	}
+
+	// 特殊处理：如果是星期几字段（通过检查是否包含"sun"键），并且值为7，则转换为0（周日）
+	if names != nil && expr == "7" {
+		if _, hasSun := names["sun"]; hasSun {
+			return 0, nil
+		}
+	}
+
 	return mustParseInt(expr)
 }
 
@@ -368,76 +329,4 @@ func getBits(min, max, step uint) uint64 {
 // all returns all bits within the given bounds.  (plus the star bit)
 func all(r bounds) uint64 {
 	return getBits(r.min, r.max, 1) | starBit
-}
-
-// parseDescriptor returns a predefined schedule for the expression, or error if none matches.
-func parseDescriptor(descriptor string, loc *time.Location) (Schedule, error) {
-	switch descriptor {
-	case "@yearly", "@annually":
-		return &SpecSchedule{
-			Second:   1 << seconds.min,
-			Minute:   1 << minutes.min,
-			Hour:     1 << hours.min,
-			Dom:      1 << dom.min,
-			Month:    1 << months.min,
-			Dow:      all(dow),
-			Location: loc,
-		}, nil
-
-	case "@monthly":
-		return &SpecSchedule{
-			Second:   1 << seconds.min,
-			Minute:   1 << minutes.min,
-			Hour:     1 << hours.min,
-			Dom:      1 << dom.min,
-			Month:    all(months),
-			Dow:      all(dow),
-			Location: loc,
-		}, nil
-
-	case "@weekly":
-		return &SpecSchedule{
-			Second:   1 << seconds.min,
-			Minute:   1 << minutes.min,
-			Hour:     1 << hours.min,
-			Dom:      all(dom),
-			Month:    all(months),
-			Dow:      1 << dow.min,
-			Location: loc,
-		}, nil
-
-	case "@daily", "@midnight":
-		return &SpecSchedule{
-			Second:   1 << seconds.min,
-			Minute:   1 << minutes.min,
-			Hour:     1 << hours.min,
-			Dom:      all(dom),
-			Month:    all(months),
-			Dow:      all(dow),
-			Location: loc,
-		}, nil
-
-	case "@hourly":
-		return &SpecSchedule{
-			Second:   1 << seconds.min,
-			Minute:   1 << minutes.min,
-			Hour:     all(hours),
-			Dom:      all(dom),
-			Month:    all(months),
-			Dow:      all(dow),
-			Location: loc,
-		}, nil
-
-	}
-
-	const every = "@every "
-	if strings.HasPrefix(descriptor, every) {
-		duration, err := time.ParseDuration(descriptor[len(every):])
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse duration %s: %s", descriptor, err)
-		}
-		return Every(duration), nil
-	}
-
-	return nil, fmt.Errorf("unrecognized descriptor: %s", descriptor)
 }

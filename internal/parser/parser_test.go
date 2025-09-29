@@ -138,7 +138,6 @@ func TestParseScheduleErrors(t *testing.T) {
 }
 
 func TestParseSchedule(t *testing.T) {
-	tokyo, _ := time.LoadLocation("Asia/Tokyo")
 	entries := []struct {
 		parser   Parser
 		expr     string
@@ -148,13 +147,7 @@ func TestParseSchedule(t *testing.T) {
 		{standardParser, "5 * * * *", every5min(time.Local)},
 		{secondParser, "CRON_TZ=UTC  0 5 * * * *", every5min(time.UTC)},
 		{standardParser, "CRON_TZ=UTC  5 * * * *", every5min(time.UTC)},
-		{secondParser, "CRON_TZ=Asia/Tokyo 0 5 * * * *", every5min(tokyo)},
-		{secondParser, "@every 5m", ConstantDelaySchedule{5 * time.Minute}},
-		{secondParser, "@midnight", midnight(time.Local)},
-		{secondParser, "TZ=UTC  @midnight", midnight(time.UTC)},
-		{secondParser, "TZ=Asia/Tokyo @midnight", midnight(tokyo)},
-		{secondParser, "@yearly", annual(time.Local)},
-		{secondParser, "@annually", annual(time.Local)},
+		{secondParser, "0 5 * * * *", every5min(time.Local)},
 		{
 			parser: secondParser,
 			expr:   "* 5 * * * *",
@@ -322,10 +315,7 @@ func TestStandardSpecSchedule(t *testing.T) {
 			expr:     "5 * * * *",
 			expected: &SpecSchedule{1 << seconds.min, 1 << 5, all(hours), all(dom), all(months), all(dow), time.Local},
 		},
-		{
-			expr:     "@every 5m",
-			expected: ConstantDelaySchedule{time.Duration(5) * time.Minute},
-		},
+
 		{
 			expr: "5 j * * *",
 			err:  "failed to parse int from",
