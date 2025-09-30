@@ -65,38 +65,73 @@ func (s *SpecSchedule) Next(t time.Time) time.Time {
 
 	// 限制搜索范围，避免无限循环
 	yearLimit := t.Year() + 4
+
+WRAP:
 	for t.Year() < yearLimit {
 		// 检查月份
 		for 1<<uint(t.Month())&s.Month == 0 {
-			if t = time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, t.Location()); t.Year() >= yearLimit {
+			// 如果月份不匹配，跳到下个月的第一天
+			if t.Month() == time.December {
+				t = time.Date(t.Year()+1, time.January, 1, 0, 0, 0, 0, t.Location())
+			} else {
+				t = time.Date(t.Year(), t.Month()+1, 1, 0, 0, 0, 0, t.Location())
+			}
+			if t.Year() >= yearLimit {
 				return time.Time{}
 			}
 		}
 
 		// 检查日期
 		for !dayMatches(s, t) {
-			if t = time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, t.Location()); t.Year() >= yearLimit {
+			t = t.AddDate(0, 0, 1)
+			t = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+
+			if t.Day() == 1 {
+				// 已经进入新月份，重新检查月份
+				goto WRAP
+			}
+			if t.Year() >= yearLimit {
 				return time.Time{}
 			}
 		}
 
 		// 检查小时
 		for 1<<uint(t.Hour())&s.Hour == 0 {
-			if t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour()+1, 0, 0, 0, t.Location()); t.Year() >= yearLimit {
+			t = t.Add(1 * time.Hour)
+			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, t.Location())
+
+			if t.Hour() == 0 {
+				// 已经进入新的一天，重新检查日期
+				goto WRAP
+			}
+			if t.Year() >= yearLimit {
 				return time.Time{}
 			}
 		}
 
 		// 检查分钟
 		for 1<<uint(t.Minute())&s.Minute == 0 {
-			if t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute()+1, 0, 0, t.Location()); t.Year() >= yearLimit {
+			t = t.Add(1 * time.Minute)
+			t = time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), 0, 0, t.Location())
+
+			if t.Minute() == 0 {
+				// 已经进入新的小时，重新检查小时
+				goto WRAP
+			}
+			if t.Year() >= yearLimit {
 				return time.Time{}
 			}
 		}
 
 		// 检查秒
 		for 1<<uint(t.Second())&s.Second == 0 {
-			if t = t.Add(1 * time.Second); t.Year() >= yearLimit {
+			t = t.Add(1 * time.Second)
+
+			if t.Second() == 0 {
+				// 已经进入新的分钟，重新检查分钟
+				goto WRAP
+			}
+			if t.Year() >= yearLimit {
 				return time.Time{}
 			}
 		}

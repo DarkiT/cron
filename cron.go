@@ -99,6 +99,10 @@ func New(opts ...Option) *Cron {
 		opt(c)
 	}
 
+	if c.panicHandler == nil {
+		c.panicHandler = NewDefaultPanicHandler(c.logger)
+	}
+
 	// 使用配置的 rootContext 创建调度器
 	c.scheduler = newSchedulerWithContext(c.rootContext)
 
@@ -108,6 +112,7 @@ func New(opts ...Option) *Cron {
 	// 设置调度器的依赖项
 	c.scheduler.logger = c.logger
 	c.scheduler.monitor = c.monitor
+	c.scheduler.panicHandler = c.panicHandler
 
 	return c
 }
@@ -220,7 +225,14 @@ func (c *Cron) contextWatcher() {
 		return
 	}
 
-	<-c.rootContext.Done()
+	// 检查 Done channel 是否为 nil
+	// context.Background()和 context.TODO()的 Done() 返回 nil
+	done := c.rootContext.Done()
+	if done == nil {
+		return
+	}
+
+	<-done
 
 	// 上下文被取消，自动停止调度器
 	if c.logger != nil {

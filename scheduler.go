@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -12,14 +13,16 @@ import (
 
 // scheduler 是核心调度器
 type scheduler struct {
-	tasks   map[string]*taskRunner
-	mu      sync.RWMutex
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	running bool
-	logger  Logger
-	monitor *Monitor
+	tasks        map[string]*taskRunner
+	mu           sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	running      bool
+	logger       Logger
+	monitor      *Monitor
+	panicHandler PanicHandler
+	rootCtx      context.Context
 }
 
 // newScheduler 创建一个新的调度器
@@ -34,9 +37,10 @@ func newSchedulerWithContext(rootCtx context.Context) *scheduler {
 	}
 	ctx, cancel := context.WithCancel(rootCtx)
 	return &scheduler{
-		tasks:  make(map[string]*taskRunner),
-		ctx:    ctx,
-		cancel: cancel,
+		tasks:   make(map[string]*taskRunner),
+		ctx:     ctx,
+		cancel:  cancel,
+		rootCtx: rootCtx,
 	}
 }
 
@@ -153,6 +157,18 @@ func (s *scheduler) stop() {
 	s.running = false
 	s.cancel()
 	s.wg.Wait()
+
+	// 重新构建上下文，允许后续重新启动
+	s.ctx, s.cancel = context.WithCancel(s.rootCtx)
+	for _, runner := range s.tasks {
+		runnerCtx, cancel := context.WithCancel(s.ctx)
+		runner.ctx = runnerCtx
+		runner.cancel = cancel
+		runner.mu.Lock()
+		runner.running = false
+		runner.nextRun = runner.schedule.Next(time.Now())
+		runner.mu.Unlock()
+	}
 }
 
 // listTasks 列出所有任务ID
@@ -234,6 +250,19 @@ func (s *scheduler) executeTask(runner *taskRunner) {
 	// 并发控制逻辑
 	task := runner.task
 
+	defer func() {
+		if r := recover(); r != nil {
+			stack := debug.Stack()
+			if s.panicHandler != nil {
+				s.panicHandler.HandlePanic(task.ID, r, stack)
+			} else if s.logger != nil {
+				s.logger.Errorf("Task %s panicked: %v", task.ID, r)
+			}
+		}
+	}()
+
+	release := func() {}
+
 	if task.Options.MaxConcurrent > 0 {
 		// MaxConcurrent > 0: 严格限制最大并发数，超过则立即放弃任务
 		if runner.semaphore == nil {
@@ -244,7 +273,9 @@ func (s *scheduler) executeTask(runner *taskRunner) {
 		select {
 		case runner.semaphore <- struct{}{}:
 			// 获得执行权限
-			defer func() { <-runner.semaphore }()
+			release = func() {
+				<-runner.semaphore
+			}
 		default:
 			// 超过并发限制，立即放弃任务
 			if s.logger != nil {
@@ -255,27 +286,23 @@ func (s *scheduler) executeTask(runner *taskRunner) {
 	}
 	// MaxConcurrent = 0: 允许无限并发，不做任何限制
 
-	// 恢复panic
-	defer func() {
-		if r := recover(); r != nil {
-			if s.logger != nil {
-				s.logger.Errorf("Task %s panicked: %v", runner.task.ID, r)
-			}
-		}
-	}()
+	run := func() {
+		defer release()
 
-	// 根据任务类型执行
-	execCtx := runner.ctx
-	if task.Options.Timeout > 0 {
-		var cancel context.CancelFunc
-		execCtx, cancel = context.WithTimeout(execCtx, task.Options.Timeout)
-		defer cancel()
+		execCtx := runner.ctx
+		if task.Options.Timeout > 0 {
+			var cancel context.CancelFunc
+			execCtx, cancel = context.WithTimeout(execCtx, task.Options.Timeout)
+			defer cancel()
+		}
+
+		s.executeTaskJob(task, execCtx)
 	}
 
 	if task.Options.Async {
-		go s.executeTaskJob(task, execCtx)
+		go run()
 	} else {
-		s.executeTaskJob(task, execCtx)
+		run()
 	}
 }
 
@@ -283,19 +310,13 @@ func (s *scheduler) executeTask(runner *taskRunner) {
 func (s *scheduler) executeHandler(task *Task, ctx context.Context) bool {
 	done := make(chan error, 1)
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if s.logger != nil {
-					s.logger.Errorf("Task %s panicked: %v", task.ID, r)
-				}
-				done <- fmt.Errorf("panic: %v", r)
-				return
-			}
-		}()
-
-		// 执行任务处理函数
-		task.Handler(ctx)
-		done <- nil
+		var err error
+		if recovered := SafeCall(task.ID, func() {
+			task.Handler(ctx)
+		}, s.panicHandler); recovered {
+			err = fmt.Errorf("panic recovered in task %s", task.ID)
+		}
+		done <- err
 	}()
 
 	select {
@@ -317,18 +338,12 @@ func (s *scheduler) executeHandler(task *Task, ctx context.Context) bool {
 func (s *scheduler) executeJobInterface(task *Task, ctx context.Context) bool {
 	done := make(chan error, 1)
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				if s.logger != nil {
-					s.logger.Errorf("Task %s panicked: %v", task.ID, r)
-				}
-				done <- fmt.Errorf("panic: %v", r)
-				return
-			}
-		}()
-
-		// 执行任务接口
-		err := task.Job.Run(ctx)
+		var err error
+		if recovered := SafeCall(task.ID, func() {
+			err = task.Job.Run(ctx)
+		}, s.panicHandler); recovered {
+			err = fmt.Errorf("panic recovered in task %s", task.ID)
+		}
 		done <- err
 	}()
 

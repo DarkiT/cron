@@ -214,9 +214,9 @@ func TestConcurrencyControlWithRealScheduler(t *testing.T) {
 			}
 
 			// 添加任务 - 每100ms执行一次
-			err := c.ScheduleJob("real-concurrency-test", "*/1 * * * * *", testJob, JobOptions{
+			err := c.ScheduleJob("real-concurrency-test", "@every 100ms", testJob, JobOptions{
 				MaxConcurrent: tt.maxConcurrent,
-				Async:         false, // 同步执行更容易观察并发控制
+				Async:         true, // 异步执行以观察真实并发
 			})
 			if err != nil {
 				t.Fatalf("添加任务失败: %v", err)

@@ -70,8 +70,8 @@ func TestConcurrencyControl(t *testing.T) {
 				atomic.AddInt64(&runningCount, -1)
 			}
 
-			// 添加任务 - 每秒执行10次
-			err := c.ScheduleJob("test-concurrent", "*/1 * * * * *", &ConcurrencyTestJob{handler: job}, JobOptions{
+			// 添加任务 - 每100ms执行一次
+			err := c.ScheduleJob("test-concurrent", "@every 100ms", &ConcurrencyTestJob{handler: job}, JobOptions{
 				MaxConcurrent: tt.maxConcurrent,
 				Async:         true,
 			})
@@ -91,17 +91,18 @@ func TestConcurrencyControl(t *testing.T) {
 			t.Logf("%s: 总执行次数=%d, 最大并发数=%d", tt.description, executed, maxConcurrentReached)
 
 			// 验证结果
-			if tt.maxConcurrent == 0 {
+			switch tt.maxConcurrent {
+			case 0:
 				// 无限并发：应该能达到较高的并发数
 				if maxConcurrentReached < 2 {
 					t.Errorf("无限并发模式下最大并发数应该 >= 2，实际为 %d", maxConcurrentReached)
 				}
-			} else if tt.maxConcurrent == 1 {
+			case 1:
 				// 串行执行：最大并发数应该为1
 				if maxConcurrentReached != 1 {
 					t.Errorf("串行执行模式下最大并发数应该为1，实际为 %d", maxConcurrentReached)
 				}
-			} else {
+			default:
 				// 限制并发：最大并发数应该不超过设定值
 				if maxConcurrentReached > int64(tt.maxConcurrent) {
 					t.Errorf("并发控制失效：最大并发数应该 <= %d，实际为 %d", tt.maxConcurrent, maxConcurrentReached)
@@ -182,7 +183,7 @@ func TestConcurrentTaskExecution(t *testing.T) {
 			atomic.StoreInt64(&concurrentCount, 0)
 			atomic.StoreInt64(&maxConcurrent, 0)
 
-			err := c.ScheduleJob("concurrent-test", "*/1 * * * * *", &ConcurrencyTestJob{handler: blockingTask}, JobOptions{
+			err := c.ScheduleJob("concurrent-test", "@every 100ms", &ConcurrencyTestJob{handler: blockingTask}, JobOptions{
 				MaxConcurrent: tc.maxConcur,
 				Async:         true,
 			})

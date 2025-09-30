@@ -124,27 +124,53 @@ func (pc *parserCache) updateAccessOrder(spec string) {
 
 // 保留原始解析方法，用于缓存未命中时
 func (p Parser) parseNoCache(spec string) (Schedule, error) {
-	// 空字符串检查
-	if len(spec) == 0 {
+	trimmed := strings.TrimSpace(spec)
+	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("empty spec string")
 	}
 
-	// 简化实现：不支持时区语法，使用本地时区
-	if strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=") {
-		return nil, fmt.Errorf("timezone syntax not supported: %s", spec)
-	}
 	loc := time.Local
 
-	// 支持描述符语法（需要Descriptor选项）
-	if strings.HasPrefix(spec, "@") {
-		if p.options&Descriptor == 0 {
-			return nil, fmt.Errorf("descriptor syntax not supported without Descriptor option: %s", spec)
+	// 支持 TZ=/CRON_TZ= 前缀设置时区
+	if strings.HasPrefix(trimmed, "TZ=") || strings.HasPrefix(trimmed, "CRON_TZ=") {
+		var (
+			prefix string
+			rest   string
+		)
+
+		if fields := strings.Fields(trimmed); len(fields) >= 2 {
+			prefix = fields[0]
+			rest = strings.TrimSpace(strings.TrimPrefix(trimmed, prefix))
+		} else {
+			return nil, fmt.Errorf("invalid timezone spec: %s", spec)
 		}
-		return p.parseDescriptor(spec, loc)
+
+		if rest == "" {
+			return nil, fmt.Errorf("missing cron expression after timezone prefix: %s", spec)
+		}
+
+		tzName := strings.TrimPrefix(prefix, "TZ=")
+		tzName = strings.TrimPrefix(tzName, "CRON_TZ=")
+
+		location, err := time.LoadLocation(tzName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load timezone %s: %w", tzName, err)
+		}
+
+		loc = location
+		trimmed = rest
+	}
+
+	// 支持描述符语法（需要Descriptor选项）
+	if strings.HasPrefix(trimmed, "@") {
+		if p.options&Descriptor == 0 {
+			return nil, fmt.Errorf("descriptor syntax not supported without Descriptor option: %s", trimmed)
+		}
+		return p.parseDescriptor(trimmed, loc)
 	}
 
 	// 使用通用的cron字段解析方法
-	return p.parseCronFields(spec, loc)
+	return p.parseCronFields(trimmed, loc)
 }
 
 // parseDescriptor 解析描述符语法，如 @every, @daily, @weekly, @monthly 等
@@ -196,19 +222,16 @@ func (p Parser) parseDescriptor(spec string, loc *time.Location) (Schedule, erro
 
 // parseCronFields 解析标准的cron字段，不处理描述符语法
 func (p Parser) parseCronFields(spec string, loc *time.Location) (Schedule, error) {
-	// 按空格分割字段
 	fields := strings.Fields(spec)
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("empty spec string")
 	}
 
-	// 验证并填充省略或可选字段
 	fields, err := normalizeFields(fields, p.options)
 	if err != nil {
 		return nil, err
 	}
 
-	// 根据解析器选项动态确定字段映射
 	var (
 		second     uint64
 		minute     uint64
@@ -218,66 +241,46 @@ func (p Parser) parseCronFields(spec string, loc *time.Location) (Schedule, erro
 		dayofweek  uint64
 	)
 
-	// 字段索引映射
-	fieldIndex := 0
+	// 此时 fields 应该是已经由 normalizeFields 处理过的6个字段
+	// 直接按照 places 顺序解析每个字段
+	for idx, place := range places {
+		if idx >= len(fields) {
+			return nil, fmt.Errorf("field index out of range: %d", idx)
+		}
 
-	// 解析各个字段（按places数组的顺序）
-	for _, place := range places {
-		if p.options&place > 0 {
-			if fieldIndex >= len(fields) {
-				return nil, fmt.Errorf("field index out of range: %d", fieldIndex)
+		fieldSpec := fields[idx]
+		var fieldValue uint64
+		switch place {
+		case Second:
+			if fieldValue, err = getField(fieldSpec, seconds); err != nil {
+				return nil, fmt.Errorf("failed to parse second field: %s", err)
 			}
-
-			var fieldValue uint64
-			switch place {
-			case Second:
-				if fieldValue, err = getField(fields[fieldIndex], seconds); err != nil {
-					return nil, fmt.Errorf("failed to parse second field: %s", err)
-				}
-				second = fieldValue
-			case Minute:
-				if fieldValue, err = getField(fields[fieldIndex], minutes); err != nil {
-					return nil, fmt.Errorf("failed to parse minute field: %s", err)
-				}
-				minute = fieldValue
-			case Hour:
-				if fieldValue, err = getField(fields[fieldIndex], hours); err != nil {
-					return nil, fmt.Errorf("failed to parse hour field: %s", err)
-				}
-				hour = fieldValue
-			case Dom:
-				if fieldValue, err = getField(fields[fieldIndex], dom); err != nil {
-					return nil, fmt.Errorf("failed to parse day-of-month field: %s", err)
-				}
-				dayofmonth = fieldValue
-			case Month:
-				if fieldValue, err = getField(fields[fieldIndex], months); err != nil {
-					return nil, fmt.Errorf("failed to parse month field: %s", err)
-				}
-				month = fieldValue
-			case Dow:
-				if fieldValue, err = getField(fields[fieldIndex], dow); err != nil {
-					return nil, fmt.Errorf("failed to parse day-of-week field: %s", err)
-				}
-				dayofweek = fieldValue
+			second = fieldValue
+		case Minute:
+			if fieldValue, err = getField(fieldSpec, minutes); err != nil {
+				return nil, fmt.Errorf("failed to parse minute field: %s", err)
 			}
-			fieldIndex++
-		} else {
-			// 为未包含的字段设置默认值
-			switch place {
-			case Second:
-				second = 1 << 0 // 默认第0秒
-			case Minute:
-				minute = 1 << 0 // 默认第0分钟
-			case Hour:
-				hour = 1 << 0 // 默认第0小时
-			case Dom:
-				dayofmonth = all(dom) // 默认任意日期
-			case Month:
-				month = all(months) // 默认任意月份
-			case Dow:
-				dayofweek = all(dow) // 默认任意星期
+			minute = fieldValue
+		case Hour:
+			if fieldValue, err = getField(fieldSpec, hours); err != nil {
+				return nil, fmt.Errorf("failed to parse hour field: %s", err)
 			}
+			hour = fieldValue
+		case Dom:
+			if fieldValue, err = getField(fieldSpec, dom); err != nil {
+				return nil, fmt.Errorf("failed to parse day-of-month field: %s", err)
+			}
+			dayofmonth = fieldValue
+		case Month:
+			if fieldValue, err = getField(fieldSpec, months); err != nil {
+				return nil, fmt.Errorf("failed to parse month field: %s", err)
+			}
+			month = fieldValue
+		case Dow:
+			if fieldValue, err = getField(fieldSpec, dow); err != nil {
+				return nil, fmt.Errorf("failed to parse day-of-week field: %s", err)
+			}
+			dayofweek = fieldValue
 		}
 	}
 
@@ -348,5 +351,8 @@ type ConstantDelaySchedule struct {
 
 // Next 返回下一个执行时间
 func (schedule *ConstantDelaySchedule) Next(t time.Time) time.Time {
-	return t.In(schedule.Location).Add(schedule.Delay)
+	if schedule.Location != nil {
+		t = t.In(schedule.Location)
+	}
+	return t.Add(schedule.Delay)
 }
