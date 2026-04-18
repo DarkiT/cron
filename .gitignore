@@ -20,7 +20,10 @@ vendor/
 .todo/
 .idea/
 .fleet/
-.cnb
+
+# 本地开发工具
+.history/
+.vscode-server/
 
 # Go 工作区文件
 go.work
@@ -78,7 +81,7 @@ secrets.yaml
 tmp/
 
 # 调试文件
-debug
+./debug/
 __debug_bin
 debug.test
 
@@ -108,6 +111,7 @@ yarn.lock
 
 # 缓存目录
 .cache/
+.ace/
 .parcel-cache/
 .next/
 .nuxt/
@@ -147,6 +151,8 @@ docs/site/
 config.local.yaml
 config.local.json
 settings.local.json
+repomix.config.json
+.repomixignore
 
 # 性能分析文件
 cpu.prof
@@ -171,28 +177,18 @@ Dockerfile.dev
 docker-compose.override.yml
 .dockerignore
 
-# GitHub 相关
-.github/
-
 # 监控和日志
 prometheus.yml
 grafana/
 *.log.*
 
-# 本地开发工具
-.history/
-.vscode-server/
-
 # AI 配置
 .spec-workflow/
-.serena
-.claude
-.kiro
 .cursor
-.cursorrules
-.vibedev
+.claude
 .codex
 .gemini
 .mcp.json
 CLAUDE.md
+CLAUDE_*.md
 AGENTS.md

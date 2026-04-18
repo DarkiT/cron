@@ -9,21 +9,21 @@ import (
 
 // TestSimpleConcurrency 简单的并发测试
 func TestSimpleConcurrency(t *testing.T) {
+	// Case 1: 无限并发
 	c := New()
 	defer c.Stop()
 
-	var runningCount int64
-	var maxConcurrent int64
+	var runningCountUnlimited int64
+	var maxConcurrentUnlimited int64
 
-	testJob := &ConcurrencyTestJob{
+	unlimitedJob := &ConcurrencyTestJob{
 		handler: func(ctx context.Context) {
-			current := atomic.AddInt64(&runningCount, 1)
+			current := atomic.AddInt64(&runningCountUnlimited, 1)
 
-			// 记录最大并发数
 			for {
-				max := atomic.LoadInt64(&maxConcurrent)
+				max := atomic.LoadInt64(&maxConcurrentUnlimited)
 				if current > max {
-					if atomic.CompareAndSwapInt64(&maxConcurrent, max, current) {
+					if atomic.CompareAndSwapInt64(&maxConcurrentUnlimited, max, current) {
 						break
 					}
 				} else {
@@ -31,14 +31,12 @@ func TestSimpleConcurrency(t *testing.T) {
 				}
 			}
 
-			// 任务持续1秒
 			time.Sleep(1 * time.Second)
-			atomic.AddInt64(&runningCount, -1)
+			atomic.AddInt64(&runningCountUnlimited, -1)
 		},
 	}
 
-	// 测试无限并发 (MaxConcurrent = 0)
-	err := c.ScheduleJob("unlimited", "*/1 * * * * *", testJob, JobOptions{
+	err := c.ScheduleJob("unlimited", "@every 100ms", unlimitedJob, JobOptions{
 		MaxConcurrent: 0,
 		Async:         true,
 	})
@@ -47,28 +45,44 @@ func TestSimpleConcurrency(t *testing.T) {
 	}
 
 	c.Start()
+	time.Sleep(400 * time.Millisecond)
+	c.Stop()
 
-	// 等待足够长时间让多个任务重叠执行
-	time.Sleep(3 * time.Second)
-
-	maxReached := atomic.LoadInt64(&maxConcurrent)
+	maxReached := atomic.LoadInt64(&maxConcurrentUnlimited)
 	t.Logf("无限并发测试: 最大并发数 = %d", maxReached)
 
-	// 无限并发应该允许多个任务同时运行
 	if maxReached < 2 {
 		t.Errorf("无限并发模式失败: 期望最大并发 >= 2, 实际 = %d", maxReached)
 	}
 
-	c.Stop()
-
-	// 重置计数器测试串行执行
-	atomic.StoreInt64(&runningCount, 0)
-	atomic.StoreInt64(&maxConcurrent, 0)
-
+	// Case 2: 串行执行
 	c2 := New()
 	defer c2.Stop()
 
-	err = c2.ScheduleJob("serial", "*/1 * * * * *", testJob, JobOptions{
+	var runningCountSerial int64
+	var maxConcurrentSerial int64
+
+	serialJob := &ConcurrencyTestJob{
+		handler: func(ctx context.Context) {
+			current := atomic.AddInt64(&runningCountSerial, 1)
+
+			for {
+				max := atomic.LoadInt64(&maxConcurrentSerial)
+				if current > max {
+					if atomic.CompareAndSwapInt64(&maxConcurrentSerial, max, current) {
+						break
+					}
+				} else {
+					break
+				}
+			}
+
+			time.Sleep(120 * time.Millisecond)
+			atomic.AddInt64(&runningCountSerial, -1)
+		},
+	}
+
+	err = c2.ScheduleJob("serial", "@every 100ms", serialJob, JobOptions{
 		MaxConcurrent: 1,
 		Async:         true,
 	})
@@ -77,13 +91,12 @@ func TestSimpleConcurrency(t *testing.T) {
 	}
 
 	c2.Start()
-	time.Sleep(3 * time.Second)
+	time.Sleep(400 * time.Millisecond)
 	c2.Stop()
 
-	maxReached = atomic.LoadInt64(&maxConcurrent)
+	maxReached = atomic.LoadInt64(&maxConcurrentSerial)
 	t.Logf("串行执行测试: 最大并发数 = %d", maxReached)
 
-	// 串行执行应该最大并发数为1
 	if maxReached != 1 {
 		t.Errorf("串行执行模式失败: 期望最大并发 = 1, 实际 = %d", maxReached)
 	}

@@ -2,11 +2,11 @@
 
 本目录包含了展示cron库各种功能的示例程序。
 
-## 📁 示例目录
+##  示例目录
 
 ### [minimal/](./minimal/) - 极简使用示例
 展示cron库的基础用法：
-- 函数调度 (`Schedule`)  
+- 函数调度 (`Schedule`)
 - Job接口调度 (`ScheduleJob`)
 - 配置选项（超时、异步、并发控制）
 - 监控统计功能
@@ -15,7 +15,7 @@
 cd examples/minimal && go run main.go
 ```
 
-### [true-auto-register/](./true-auto-register/) - 自动注册示例  
+### [true-auto-register/](./true-auto-register/) - 自动注册示例
 演示如何使用空导入实现任务自动注册：
 - 空导入触发注册 (`import _ "jobs"`)
 - 一键调度所有注册任务 (`ScheduleRegistered`)
@@ -39,17 +39,17 @@ cd examples/context-lifecycle && go run main.go
 ### [jobs/](./jobs/) - 示例任务包
 包含可自动注册的示例任务：
 - BackupJob - 自动备份任务
-- CleanupJob - 自动清理任务  
+- CleanupJob - 自动清理任务
 - MonitorJob - 系统监控任务
 
-## 🚀 快速开始
+##  快速开始
 
 1. **基础使用**：从`minimal`示例开始
 2. **生命周期管理**：查看`context-lifecycle`了解优雅关闭
 3. **高级功能**：查看`true-auto-register`了解自动注册
 4. **任务开发**：参考`jobs`包学习如何创建可注册任务
 
-## 📖 学习路径
+##  学习路径
 
 ```mermaid
 graph TD
@@ -61,7 +61,7 @@ graph TD
     F --> G[创建自己的任务]
 ```
 
-## ⭐ 核心概念
+##  核心概念
 
 ### 两种调度方式
 ```go
@@ -86,7 +86,7 @@ func (j *MyJob) Schedule() string { return "0 0 * * * *" }
 func (j *MyJob) Run(ctx context.Context) error { return nil }
 
 func init() {
-    cron.MustRegisterJob(&MyJob{})
+    cron.SafeRegisterJob(&MyJob{}) // 使用安全的注册方法
 }
 
 // 使用任务
@@ -94,7 +94,7 @@ import _ "myapp/jobs"
 scheduler.ScheduleRegistered() // 一键调度所有注册任务
 ```
 
-## 🔧 运行要求
+##  运行要求
 
 - Go 1.21+
 - 无外部依赖

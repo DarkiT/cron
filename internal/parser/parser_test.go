@@ -143,22 +143,30 @@ func TestParseSchedule(t *testing.T) {
 		expr     string
 		expected Schedule
 	}{
-		{secondParser, "0 5 * * * *", every5min(time.Local)},
-		{standardParser, "5 * * * *", every5min(time.Local)},
-		{secondParser, "CRON_TZ=UTC  0 5 * * * *", every5min(time.UTC)},
-		{standardParser, "CRON_TZ=UTC  5 * * * *", every5min(time.UTC)},
-		{secondParser, "0 5 * * * *", every5min(time.Local)},
+		{secondParser, "0 5 * * * *", every5min(time.Local, false)},
+		{standardParser, "5 * * * *", every5min(time.Local, false)},
+		{secondParser, "CRON_TZ=UTC  0 5 * * * *", every5min(time.UTC, true)},
+		{standardParser, "CRON_TZ=UTC  5 * * * *", every5min(time.UTC, true)},
+		{secondParser, "0 5 * * * *", every5min(time.Local, false)},
 		{
 			parser: secondParser,
 			expr:   "* 5 * * * *",
 			expected: &SpecSchedule{
-				Second:   all(seconds),
-				Minute:   1 << 5,
-				Hour:     all(hours),
-				Dom:      all(dom),
-				Month:    all(months),
-				Dow:      all(dow),
-				Location: time.Local,
+				Second:                 all(seconds),
+				Minute:                 1 << 5,
+				Hour:                   all(hours),
+				Dom:                    all(dom),
+				Month:                  all(months),
+				Dow:                    all(dow),
+				Location:               time.Local,
+				locationSet:            false,
+				lastDayOfMonth:         false,
+				lastWorkdayOfMonth:     false,
+				workdaysOfMonth:        map[int]bool{},
+				lastWeekDaysOfWeek:     map[int]bool{},
+				specificWeekDaysOfWeek: map[int]bool{},
+				daysOfMonthRestricted:  false,
+				daysOfWeekRestricted:   false,
 			},
 		},
 	}
@@ -180,9 +188,9 @@ func TestOptionalSecondSchedule(t *testing.T) {
 		expr     string
 		expected Schedule
 	}{
-		{"0 5 * * * *", every5min(time.Local)},
-		{"5 5 * * * *", every5min5s(time.Local)},
-		{"5 * * * *", every5min(time.Local)},
+		{"0 5 * * * *", every5min(time.Local, false)},
+		{"5 5 * * * *", every5min5s(time.Local, false)},
+		{"5 * * * *", every5min(time.Local, false)},
 	}
 
 	for _, c := range entries {
@@ -312,8 +320,24 @@ func TestStandardSpecSchedule(t *testing.T) {
 		err      string
 	}{
 		{
-			expr:     "5 * * * *",
-			expected: &SpecSchedule{1 << seconds.min, 1 << 5, all(hours), all(dom), all(months), all(dow), time.Local},
+			expr: "5 * * * *",
+			expected: &SpecSchedule{
+				Second:                 1 << seconds.min,
+				Minute:                 1 << 5,
+				Hour:                   all(hours),
+				Dom:                    all(dom),
+				Month:                  all(months),
+				Dow:                    all(dow),
+				Location:               time.Local,
+				locationSet:            false,
+				lastDayOfMonth:         false,
+				lastWorkdayOfMonth:     false,
+				workdaysOfMonth:        map[int]bool{},
+				lastWeekDaysOfWeek:     map[int]bool{},
+				specificWeekDaysOfWeek: map[int]bool{},
+				daysOfMonthRestricted:  false,
+				daysOfWeekRestricted:   false,
+			},
 		},
 
 		{
@@ -348,26 +372,379 @@ func TestNoDescriptorParser(t *testing.T) {
 	}
 }
 
-func every5min(loc *time.Location) *SpecSchedule {
-	return &SpecSchedule{1 << 0, 1 << 5, all(hours), all(dom), all(months), all(dow), loc}
-}
-
-func every5min5s(loc *time.Location) *SpecSchedule {
-	return &SpecSchedule{1 << 5, 1 << 5, all(hours), all(dom), all(months), all(dow), loc}
-}
-
-func midnight(loc *time.Location) *SpecSchedule {
-	return &SpecSchedule{1, 1, 1, all(dom), all(months), all(dow), loc}
-}
-
-func annual(loc *time.Location) *SpecSchedule {
+func every5min(loc *time.Location, explicit bool) *SpecSchedule {
 	return &SpecSchedule{
-		Second:   1 << seconds.min,
-		Minute:   1 << minutes.min,
-		Hour:     1 << hours.min,
-		Dom:      1 << dom.min,
-		Month:    1 << months.min,
-		Dow:      all(dow),
-		Location: loc,
+		Second:                 1 << 0,
+		Minute:                 1 << 5,
+		Hour:                   all(hours),
+		Dom:                    all(dom),
+		Month:                  all(months),
+		Dow:                    all(dow),
+		Location:               loc,
+		locationSet:            explicit,
+		lastDayOfMonth:         false,
+		lastWorkdayOfMonth:     false,
+		workdaysOfMonth:        map[int]bool{},
+		lastWeekDaysOfWeek:     map[int]bool{},
+		specificWeekDaysOfWeek: map[int]bool{},
+		daysOfMonthRestricted:  false,
+		daysOfWeekRestricted:   false,
+	}
+}
+
+func every5min5s(loc *time.Location, explicit bool) *SpecSchedule {
+	return &SpecSchedule{
+		Second:                 1 << 5,
+		Minute:                 1 << 5,
+		Hour:                   all(hours),
+		Dom:                    all(dom),
+		Month:                  all(months),
+		Dow:                    all(dow),
+		Location:               loc,
+		locationSet:            explicit,
+		lastDayOfMonth:         false,
+		lastWorkdayOfMonth:     false,
+		workdaysOfMonth:        map[int]bool{},
+		lastWeekDaysOfWeek:     map[int]bool{},
+		specificWeekDaysOfWeek: map[int]bool{},
+		daysOfMonthRestricted:  false,
+		daysOfWeekRestricted:   false,
+	}
+}
+
+func midnight(loc *time.Location, explicit bool) *SpecSchedule {
+	return &SpecSchedule{
+		Second:                 1,
+		Minute:                 1,
+		Hour:                   1,
+		Dom:                    all(dom),
+		Month:                  all(months),
+		Dow:                    all(dow),
+		Location:               loc,
+		locationSet:            explicit,
+		lastDayOfMonth:         false,
+		lastWorkdayOfMonth:     false,
+		workdaysOfMonth:        map[int]bool{},
+		lastWeekDaysOfWeek:     map[int]bool{},
+		specificWeekDaysOfWeek: map[int]bool{},
+		daysOfMonthRestricted:  false,
+		daysOfWeekRestricted:   false,
+	}
+}
+
+func annual(loc *time.Location, explicit bool) *SpecSchedule {
+	return &SpecSchedule{
+		Second:                 1 << seconds.min,
+		Minute:                 1 << minutes.min,
+		Hour:                   1 << hours.min,
+		Dom:                    1 << dom.min,
+		Month:                  1 << months.min,
+		Dow:                    all(dow),
+		Location:               loc,
+		locationSet:            explicit,
+		lastDayOfMonth:         false,
+		lastWorkdayOfMonth:     false,
+		workdaysOfMonth:        map[int]bool{},
+		lastWeekDaysOfWeek:     map[int]bool{},
+		specificWeekDaysOfWeek: map[int]bool{},
+		daysOfMonthRestricted:  false,
+		daysOfWeekRestricted:   false,
+	}
+}
+
+// TestSpecialDomSyntax 测试 L/W/LW 语法
+func TestSpecialDomSyntax(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     string
+		checkFn  func(*testing.T, Schedule)
+		wantErr  bool
+		errorMsg string
+	}{
+		{
+			name: "L - 月末最后一天",
+			expr: "0 0 L * *",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.lastDayOfMonth {
+					t.Error("expected lastDayOfMonth to be true")
+				}
+				if !spec.daysOfMonthRestricted {
+					t.Error("expected daysOfMonthRestricted to be true")
+				}
+			},
+		},
+		{
+			name: "LW - 月末最后一个工作日",
+			expr: "0 0 LW * *",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.lastWorkdayOfMonth {
+					t.Error("expected lastWorkdayOfMonth to be true")
+				}
+				if !spec.daysOfMonthRestricted {
+					t.Error("expected daysOfMonthRestricted to be true")
+				}
+			},
+		},
+		{
+			name: "15W - 第15天最近的工作日",
+			expr: "0 0 15W * *",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.workdaysOfMonth[15] {
+					t.Error("expected workdaysOfMonth[15] to be true")
+				}
+				if !spec.daysOfMonthRestricted {
+					t.Error("expected daysOfMonthRestricted to be true")
+				}
+			},
+		},
+		{
+			name: "1W,15W - 多个工作日",
+			expr: "0 0 1W,15W * *",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.workdaysOfMonth[1] {
+					t.Error("expected workdaysOfMonth[1] to be true")
+				}
+				if !spec.workdaysOfMonth[15] {
+					t.Error("expected workdaysOfMonth[15] to be true")
+				}
+			},
+		},
+		{
+			name: "L,15 - 混合标准和特殊语法",
+			expr: "0 0 L,15 * *",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.lastDayOfMonth {
+					t.Error("expected lastDayOfMonth to be true")
+				}
+				if spec.Dom&(1<<15) == 0 {
+					t.Error("expected bit 15 to be set in Dom")
+				}
+			},
+		},
+		{
+			name:     "0W - 无效的工作日（0不在范围内）",
+			expr:     "0 0 0W * *",
+			wantErr:  true,
+			errorMsg: "out of range",
+		},
+		{
+			name:     "32W - 无效的工作日（超出范围）",
+			expr:     "0 0 32W * *",
+			wantErr:  true,
+			errorMsg: "out of range",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sched, err := ParseStandard(tt.expr)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.errorMsg)
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.checkFn != nil {
+				tt.checkFn(t, sched)
+			}
+		})
+	}
+}
+
+// TestSpecialDowSyntax 测试 L/# 语法
+func TestSpecialDowSyntax(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     string
+		checkFn  func(*testing.T, Schedule)
+		wantErr  bool
+		errorMsg string
+	}{
+		{
+			name: "5L - 每月最后一个星期五",
+			expr: "0 0 * * 5L",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.lastWeekDaysOfWeek[5] {
+					t.Error("expected lastWeekDaysOfWeek[5] to be true")
+				}
+				if !spec.daysOfWeekRestricted {
+					t.Error("expected daysOfWeekRestricted to be true")
+				}
+			},
+		},
+		{
+			name: "FRIL - 使用名称的最后一个星期五",
+			expr: "0 0 * * FRIL",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.lastWeekDaysOfWeek[5] {
+					t.Error("expected lastWeekDaysOfWeek[5] to be true")
+				}
+			},
+		},
+		{
+			name: "5#3 - 每月第3个星期五",
+			expr: "0 0 * * 5#3",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				// 编码: (week-1)*7 + dow = (3-1)*7 + 5 = 19
+				if !spec.specificWeekDaysOfWeek[19] {
+					t.Errorf("expected specificWeekDaysOfWeek[19] to be true, got %v", spec.specificWeekDaysOfWeek)
+				}
+				if !spec.daysOfWeekRestricted {
+					t.Error("expected daysOfWeekRestricted to be true")
+				}
+			},
+		},
+		{
+			name: "1#1 - 每月第1个星期一",
+			expr: "0 0 * * 1#1",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				// 编码: (1-1)*7 + 1 = 1
+				if !spec.specificWeekDaysOfWeek[1] {
+					t.Errorf("expected specificWeekDaysOfWeek[1] to be true, got %v", spec.specificWeekDaysOfWeek)
+				}
+			},
+		},
+		{
+			name: "MON#2 - 使用名称的第2个星期一",
+			expr: "0 0 * * MON#2",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				// 编码: (2-1)*7 + 1 = 8
+				if !spec.specificWeekDaysOfWeek[8] {
+					t.Errorf("expected specificWeekDaysOfWeek[8] to be true, got %v", spec.specificWeekDaysOfWeek)
+				}
+			},
+		},
+		{
+			name: "1#1,5L - 混合特殊语法",
+			expr: "0 0 * * 1#1,5L",
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.specificWeekDaysOfWeek[1] {
+					t.Error("expected specificWeekDaysOfWeek[1] to be true")
+				}
+				if !spec.lastWeekDaysOfWeek[5] {
+					t.Error("expected lastWeekDaysOfWeek[5] to be true")
+				}
+			},
+		},
+		{
+			name:     "5#0 - 无效的周数（0）",
+			expr:     "0 0 * * 5#0",
+			wantErr:  true,
+			errorMsg: "out of range",
+		},
+		{
+			name:     "5#6 - 无效的周数（超出范围）",
+			expr:     "0 0 * * 5#6",
+			wantErr:  true,
+			errorMsg: "out of range",
+		},
+		{
+			name:    "7L - 无效的星期（7在dow字段会被转换为0，但这里测试边界）",
+			expr:    "0 0 * * 7L",
+			wantErr: false, // 7会被转换为0（周日）
+			checkFn: func(t *testing.T, s Schedule) {
+				spec := s.(*SpecSchedule)
+				if !spec.lastWeekDaysOfWeek[0] {
+					t.Error("expected lastWeekDaysOfWeek[0] to be true (7 should convert to 0)")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sched, err := ParseStandard(tt.expr)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.errorMsg)
+					return
+				}
+				if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.checkFn != nil {
+				tt.checkFn(t, sched)
+			}
+		})
+	}
+}
+
+// TestSpecialSyntaxNext 测试特殊语法的 Next() 方法
+func TestSpecialSyntaxNext(t *testing.T) {
+	tests := []struct {
+		name     string
+		expr     string
+		from     time.Time
+		expected time.Time
+	}{
+		{
+			name:     "L - 2025年1月最后一天",
+			expr:     "0 0 L * *",
+			from:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			expected: time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "L - 2025年2月最后一天（28天）",
+			expr:     "0 0 L * *",
+			from:     time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC),
+			expected: time.Date(2025, 2, 28, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "15W - 2025年3月15日是星期六，应该调整到14日（周五）",
+			expr: "0 0 15W * *",
+			from: time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC),
+			// 2025年3月15日是星期六，最近的工作日是3月14日（周五）
+			expected: time.Date(2025, 3, 14, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "5#3 - 2025年1月第3个星期五",
+			expr: "0 0 * * 5#3",
+			from: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			// 2025年1月：3, 10, 17, 24, 31 是星期五，第3个是17日
+			expected: time.Date(2025, 1, 17, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "5L - 2025年1月最后一个星期五",
+			expr: "0 0 * * 5L",
+			from: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			// 2025年1月最后一个星期五是31日
+			expected: time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sched, err := ParseStandard(tt.expr)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			next := sched.Next(tt.from)
+			if !next.Equal(tt.expected) {
+				t.Errorf("expected %v, got %v", tt.expected, next)
+			}
+		})
 	}
 }

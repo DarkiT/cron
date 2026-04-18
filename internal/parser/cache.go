@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"container/list"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -22,8 +23,9 @@ var maxCacheSize = 1000
 type parserCache struct {
 	cache       map[string]Schedule // 表达式到解析结果的映射
 	parserType  Parser              // 解析器类型
-	accessOrder []string            // 访问顺序，用于LRU淘汰
-	mu          sync.RWMutex        // 读写锁，保护缓存
+	accessOrder *list.List          // 访问顺序，用于LRU淘汰（队头最旧，队尾最新）
+	accessIndex map[string]*list.Element
+	mu          sync.RWMutex // 读写锁，保护缓存
 }
 
 // 全局缓存实例，按解析器选项类型分别缓存
@@ -45,7 +47,8 @@ func getCacheForParser(p Parser) *parserCache {
 			cache = &parserCache{
 				cache:       make(map[string]Schedule),
 				parserType:  p,
-				accessOrder: make([]string, 0, maxCacheSize),
+				accessOrder: list.New(),
+				accessIndex: make(map[string]*list.Element),
 			}
 			parseCaches[p.options] = cache
 		}
@@ -69,9 +72,10 @@ func parseWithCache(p Parser, spec string) (Schedule, error) {
 		// 获取写锁并更新访问顺序
 		cache.mu.Lock()
 		// 再次检查，因为可能在获取写锁期间已被其他协程修改
-		if _, stillExists := cache.cache[spec]; stillExists {
+		if scheduleLocked, stillExists := cache.cache[spec]; stillExists {
 			// 将此项移到访问顺序的末尾（最新访问）
 			cache.updateAccessOrder(spec)
+			schedule = scheduleLocked
 		}
 		cache.mu.Unlock()
 
@@ -89,17 +93,20 @@ func parseWithCache(p Parser, spec string) (Schedule, error) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 
+	// 可能有其他协程已写入，直接复用已存在的调度结果并刷新顺序
+	if existing, exists := cache.cache[spec]; exists {
+		cache.updateAccessOrder(spec)
+		return existing, nil
+	}
+
 	// 检查缓存是否已满
-	if len(cache.cache) >= maxCacheSize {
-		// 移除最久未访问的项
-		oldest := cache.accessOrder[0]
-		delete(cache.cache, oldest)
-		cache.accessOrder = cache.accessOrder[1:]
+	if cache.accessOrder.Len() >= maxCacheSize {
+		cache.evictOldest()
 	}
 
 	// 添加新项到缓存
 	cache.cache[spec] = schedule
-	cache.accessOrder = append(cache.accessOrder, spec)
+	cache.addAccessOrder(spec)
 
 	return schedule, nil
 }
@@ -107,19 +114,34 @@ func parseWithCache(p Parser, spec string) (Schedule, error) {
 // updateAccessOrder 更新访问顺序，将指定项移到访问顺序的末尾
 // 注意：调用前必须获取写锁
 func (pc *parserCache) updateAccessOrder(spec string) {
-	// 查找当前位置
-	var pos int
-	for i, s := range pc.accessOrder {
-		if s == spec {
-			pos = i
-			break
-		}
+	if elem, ok := pc.accessIndex[spec]; ok {
+		pc.accessOrder.MoveToBack(elem)
+		return
 	}
 
-	// 从访问顺序中移除
-	pc.accessOrder = append(pc.accessOrder[:pos], pc.accessOrder[pos+1:]...)
-	// 添加到末尾（最近访问）
-	pc.accessOrder = append(pc.accessOrder, spec)
+	elem := pc.accessOrder.PushBack(spec)
+	pc.accessIndex[spec] = elem
+}
+
+// addAccessOrder 新增访问记录
+func (pc *parserCache) addAccessOrder(spec string) {
+	if elem, ok := pc.accessIndex[spec]; ok {
+		pc.accessOrder.MoveToBack(elem)
+		return
+	}
+	pc.accessIndex[spec] = pc.accessOrder.PushBack(spec)
+}
+
+// evictOldest 移除最久未访问的项
+func (pc *parserCache) evictOldest() {
+	oldest := pc.accessOrder.Front()
+	if oldest == nil {
+		return
+	}
+	spec := oldest.Value.(string)
+	delete(pc.cache, spec)
+	delete(pc.accessIndex, spec)
+	pc.accessOrder.Remove(oldest)
 }
 
 // 保留原始解析方法，用于缓存未命中时
@@ -130,6 +152,7 @@ func (p Parser) parseNoCache(spec string) (Schedule, error) {
 	}
 
 	loc := time.Local
+	explicitLocation := false
 
 	// 支持 TZ=/CRON_TZ= 前缀设置时区
 	if strings.HasPrefix(trimmed, "TZ=") || strings.HasPrefix(trimmed, "CRON_TZ=") {
@@ -159,6 +182,7 @@ func (p Parser) parseNoCache(spec string) (Schedule, error) {
 
 		loc = location
 		trimmed = rest
+		explicitLocation = true
 	}
 
 	// 支持描述符语法（需要Descriptor选项）
@@ -166,11 +190,21 @@ func (p Parser) parseNoCache(spec string) (Schedule, error) {
 		if p.options&Descriptor == 0 {
 			return nil, fmt.Errorf("descriptor syntax not supported without Descriptor option: %s", trimmed)
 		}
-		return p.parseDescriptor(trimmed, loc)
+		schedule, err := p.parseDescriptor(trimmed, loc)
+		if err != nil {
+			return nil, err
+		}
+		setLocation(schedule, loc, explicitLocation)
+		return schedule, nil
 	}
 
 	// 使用通用的cron字段解析方法
-	return p.parseCronFields(trimmed, loc)
+	schedule, err := p.parseCronFields(trimmed, loc)
+	if err != nil {
+		return nil, err
+	}
+	setLocation(schedule, loc, explicitLocation)
+	return schedule, nil
 }
 
 // parseDescriptor 解析描述符语法，如 @every, @daily, @weekly, @monthly 等
@@ -241,6 +275,12 @@ func (p Parser) parseCronFields(spec string, loc *time.Location) (Schedule, erro
 		dayofweek  uint64
 	)
 
+	// L/W/# 语法的扩展字段
+	var (
+		domInfo *specialFieldInfo
+		dowInfo *specialFieldInfo
+	)
+
 	// 此时 fields 应该是已经由 normalizeFields 处理过的6个字段
 	// 直接按照 places 顺序解析每个字段
 	for idx, place := range places {
@@ -267,24 +307,29 @@ func (p Parser) parseCronFields(spec string, loc *time.Location) (Schedule, erro
 			}
 			hour = fieldValue
 		case Dom:
-			if fieldValue, err = getField(fieldSpec, dom); err != nil {
+			// 使用特殊字段解析器处理 L/W/LW 语法
+			domInfo, err = getDomFieldSpecial(fieldSpec, dom)
+			if err != nil {
 				return nil, fmt.Errorf("failed to parse day-of-month field: %s", err)
 			}
-			dayofmonth = fieldValue
+			dayofmonth = domInfo.bits
 		case Month:
 			if fieldValue, err = getField(fieldSpec, months); err != nil {
 				return nil, fmt.Errorf("failed to parse month field: %s", err)
 			}
 			month = fieldValue
 		case Dow:
-			if fieldValue, err = getField(fieldSpec, dow); err != nil {
+			// 使用特殊字段解析器处理 L/# 语法
+			dowInfo, err = getDowFieldSpecial(fieldSpec, dow)
+			if err != nil {
 				return nil, fmt.Errorf("failed to parse day-of-week field: %s", err)
 			}
-			dayofweek = fieldValue
+			dayofweek = dowInfo.bits
 		}
 	}
 
-	return &SpecSchedule{
+	// 构建 SpecSchedule，包含扩展字段
+	schedule := &SpecSchedule{
 		Second:   second,
 		Minute:   minute,
 		Hour:     hour,
@@ -292,7 +337,24 @@ func (p Parser) parseCronFields(spec string, loc *time.Location) (Schedule, erro
 		Month:    month,
 		Dow:      dayofweek,
 		Location: loc,
-	}, nil
+	}
+
+	// 设置 Dom 扩展字段
+	if domInfo != nil {
+		schedule.lastDayOfMonth = domInfo.lastDayOfMonth
+		schedule.lastWorkdayOfMonth = domInfo.lastWorkdayOfMonth
+		schedule.workdaysOfMonth = domInfo.workdaysOfMonth
+		schedule.daysOfMonthRestricted = domInfo.isRestricted
+	}
+
+	// 设置 Dow 扩展字段
+	if dowInfo != nil {
+		schedule.lastWeekDaysOfWeek = dowInfo.lastWeekDaysOfWeek
+		schedule.specificWeekDaysOfWeek = dowInfo.specificWeekDaysOfWeek
+		schedule.daysOfWeekRestricted = dowInfo.isRestricted
+	}
+
+	return schedule, nil
 }
 
 // parseEvery 解析 @every 语法，如 @every 1h30m
@@ -310,6 +372,18 @@ func (p Parser) parseEvery(spec string, loc *time.Location) (Schedule, error) {
 		Delay:    duration,
 		Location: loc,
 	}, nil
+}
+
+// setLocation 根据显式标记设置调度对象的时区信息
+func setLocation(schedule Schedule, loc *time.Location, explicit bool) {
+	switch typed := schedule.(type) {
+	case *SpecSchedule:
+		typed.Location = loc
+		typed.locationSet = explicit
+	case *ConstantDelaySchedule:
+		typed.Location = loc
+		typed.locationSet = explicit
+	}
 }
 
 // parseDuration 解析持续时间，支持更多格式
@@ -345,13 +419,14 @@ func parseDuration(spec string) (time.Duration, error) {
 
 // ConstantDelaySchedule 表示固定延迟的调度
 type ConstantDelaySchedule struct {
-	Delay    time.Duration
-	Location *time.Location
+	Delay       time.Duration
+	Location    *time.Location
+	locationSet bool
 }
 
 // Next 返回下一个执行时间
 func (schedule *ConstantDelaySchedule) Next(t time.Time) time.Time {
-	if schedule.Location != nil {
+	if schedule.locationSet && schedule.Location != nil {
 		t = t.In(schedule.Location)
 	}
 	return t.Add(schedule.Delay)

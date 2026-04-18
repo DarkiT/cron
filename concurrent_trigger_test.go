@@ -36,8 +36,8 @@ func TestConcurrentTrigger(t *testing.T) {
 				}
 			}
 
-			// 任务持续500ms
-			time.Sleep(500 * time.Millisecond)
+			// 任务持续120ms
+			time.Sleep(120 * time.Millisecond)
 			atomic.AddInt64(&runningCount, -1)
 			atomic.AddInt64(&totalCompleted, 1)
 		},
@@ -54,8 +54,8 @@ func TestConcurrentTrigger(t *testing.T) {
 
 	c.Start()
 
-	// 运行1秒，10ms间隔意味着应该触发100次，但只有非重叠的能执行
-	time.Sleep(1 * time.Second)
+	// 运行300ms，验证串行控制
+	time.Sleep(300 * time.Millisecond)
 
 	c.Stop()
 
@@ -105,7 +105,7 @@ func TestManualConcurrentExecution(t *testing.T) {
 				}
 			}
 
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(80 * time.Millisecond)
 			atomic.AddInt64(&runningCount, -1)
 		},
 		Options: JobOptions{MaxConcurrent: 1},

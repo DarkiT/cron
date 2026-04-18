@@ -1,0 +1,346 @@
+openapi: 3.0.3
+info:
+  title: darkit/cron dashboard API
+  version: 1.0.0
+  description: |
+    Web dashboard contract for `github.com/darkit/cron/dashboard`.
+
+    Authentication is optional at deployment time.
+    When `WithAPIKey(...)` is configured, all `/api/*` endpoints require one of:
+    - `X-API-Key` header
+    - `api_key` query parameter
+    - `Authorization: Bearer <token>`
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/tasks:
+    get:
+      tags: [Tasks]
+      summary: List all tasks
+      parameters:
+        - in: query
+          name: labelKey
+          schema: { type: string }
+        - in: query
+          name: labelVal
+          schema: { type: string }
+      responses:
+        '200':
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TaskID'
+    get:
+      tags: [Tasks]
+      summary: Get task detail
+      responses:
+        '200':
+          description: Task detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorJSON'
+    delete:
+      tags: [Tasks]
+      summary: Remove a task
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+        '404':
+          $ref: '#/components/responses/ErrorJSON'
+  /api/tasks/{id}/run:
+    post:
+      tags: [Tasks]
+      summary: Trigger task immediately
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessJSON'
+        '400':
+          $ref: '#/components/responses/ErrorJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/tasks/{id}/pause:
+    post:
+      tags: [Tasks]
+      summary: Pause task scheduling
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessJSON'
+        '400':
+          $ref: '#/components/responses/ErrorJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/tasks/{id}/resume:
+    post:
+      tags: [Tasks]
+      summary: Resume task scheduling
+      description: Canonical resume endpoint.
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessJSON'
+        '400':
+          $ref: '#/components/responses/ErrorJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/tasks/{id}/unfuse:
+    post:
+      tags: [Tasks]
+      summary: Compatibility alias for resume
+      description: Deprecated compatibility alias of `/api/tasks/{id}/resume`.
+      deprecated: true
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessJSON'
+        '400':
+          $ref: '#/components/responses/ErrorJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/tasks/{id}/schedule:
+    patch:
+      tags: [Tasks]
+      summary: Update task schedule
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleUpdateRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessJSON'
+        '400':
+          $ref: '#/components/responses/ErrorJSON'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/stats:
+    get:
+      tags: [Stats]
+      summary: Get aggregated scheduler statistics
+      responses:
+        '200':
+          description: Stats snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+  /api/history:
+    get:
+      tags: [History]
+      summary: Query execution history
+      parameters:
+        - in: query
+          name: taskId
+          schema: { type: string }
+        - in: query
+          name: successOnly
+          schema: { type: boolean }
+        - in: query
+          name: failedOnly
+          schema: { type: boolean }
+        - in: query
+          name: startTime
+          schema: { type: string, format: date-time }
+        - in: query
+          name: endTime
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Paginated history records
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistoryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CORSForbidden'
+components:
+  parameters:
+    TaskID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Normalized task identifier.
+  responses:
+    SuccessJSON:
+      description: Successful operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SuccessResponse'
+    ErrorJSON:
+      description: Structured JSON error response
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Unauthorized
+            message: Invalid or missing API key
+            code: 401
+    CORSForbidden:
+      description: Origin not allowed by CORS allowlist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Forbidden
+            message: Origin not allowed
+            code: 403
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    ApiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        data:
+          nullable: true
+      required: [message]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        code:
+          type: integer
+      required: [error, message, code]
+    ScheduleUpdateRequest:
+      type: object
+      properties:
+        schedule:
+          type: string
+      required: [schedule]
+    TaskInfo:
+      type: object
+      properties:
+        id: { type: string }
+        schedule: { type: string }
+        nextRun: { type: string, format: date-time }
+        isRunning: { type: boolean }
+        runCount: { type: integer, format: int64 }
+        successCount: { type: integer, format: int64 }
+        failCount: { type: integer, format: int64 }
+        retryCount: { type: integer, format: int64 }
+        skippedCount: { type: integer, format: int64 }
+        pauseUntil: { type: string, format: date-time }
+        misfirePolicy: { type: string }
+        lastRunTime: { type: string, format: date-time }
+        lastRunStatus: { type: string }
+        lastError: { type: string }
+        descriptions:
+          type: object
+          additionalProperties:
+            type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+    StatsInfo:
+      type: object
+      properties:
+        totalTasks: { type: integer }
+        runningTasks: { type: integer }
+        totalRuns: { type: integer, format: int64 }
+        successRuns: { type: integer, format: int64 }
+        failedRuns: { type: integer, format: int64 }
+        totalRetries: { type: integer, format: int64 }
+        successRate: { type: number, format: double }
+        avgDuration: { type: string }
+        totalDuration: { type: string }
+        historyRecords: { type: integer }
+    ExecutionRecord:
+      type: object
+      properties:
+        id: { type: string }
+        taskID: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        duration: { type: integer, format: int64 }
+        success: { type: boolean }
+        retryCount: { type: integer, format: int64 }
+        error: { type: string }
+    HistoryResponse:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionRecord'
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+        totalPages: { type: integer }

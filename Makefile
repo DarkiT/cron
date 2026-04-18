@@ -1,18 +1,18 @@
 # 项目名称
-APP_NAME := sugardb
+APP_NAME := $(shell echo $$CNB_REPO_NAME_LOWERCASE || echo $${APP_NAME:-app})
 # 版本信息
-VERSION := $(shell git describe --tags --always --dirty)
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "v1.0.0-dev")
 # 构建时间
 BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
 # Git commit hash
-GIT_COMMIT := $(shell git rev-parse HEAD)
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # 编译参数
-LDFLAGS := -s -w -extldflags '-static' -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.gitCommit=$(GIT_COMMIT)
+LDFLAGS := -s -w -X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)
 BUILD_FLAGS := -trimpath -ldflags "$(LDFLAGS)"
 
 # 源文件路径 - 根据项目架构调整
-MAIN_PATH := ./cmd/server/main.go
+MAIN_PATH := .
 # 输出目录
 BIN_DIR := ./bin
 
@@ -37,7 +37,7 @@ clean:
 
 # 代码格式化
 fmt:
-	$(GOFMT) -s -w ./api ./cmd ./configs ./internal ./pkg ./test
+	$(GOFMT) -s -w .
 
 # 代码静态检查
 lint:
@@ -112,9 +112,14 @@ info:
 	@echo "Git提交: $(GIT_COMMIT)"
 	@echo "编译参数: $(BUILD_FLAGS)"
 
-# 本地开发运行
+# 本地开发运行 (直接运行源码)
 dev:
 	go run $(MAIN_PATH)
+
+# 构建并运行
+run: build
+	@echo "运行 $(APP_NAME)..."
+	@$(BIN_DIR)/$(APP_NAME)
 
 # Docker 开发环境
 docker-dev:
@@ -134,6 +139,7 @@ install-dev-deps:
 # 测试
 test:
 	$(GOTEST) -v ./... -coverprofile=./coverage/coverage.out
+	$(GOTEST) -json ./... 2>&1 | tdd-guard-go -project-root /workspace
 
 # 测试（带竞态检测）
 test-race:
@@ -146,10 +152,6 @@ cover:
 # 性能基准测试
 benchmark:
 	$(GOTEST) -bench=. ./... -benchmem
-
-# 生成模拟数据
-mock:
-	mockgen -source=./internal/domain/repository/user_repository.go -destination=./test/mocks/user_repository_mock.go
 
 # 初始化项目结构
 init-project:
@@ -177,7 +179,8 @@ help:
 	@echo "  lint                 - 运行代码静态检查"
 	@echo "  vet                  - 运行代码安全检查"
 	@echo "  swagger              - 生成API文档"
-	@echo "  dev                  - 本地运行开发环境"
+	@echo "  dev                  - 本地运行开发环境 (直接运行源码)"
+	@echo "  run                  - 构建并运行程序"
 	@echo "  docker-dev           - 使用Docker运行开发环境"
 	@echo "  docker-prod          - 使用Docker运行生产环境"
 	@echo "  install-dev-deps     - 安装开发依赖工具"
@@ -197,4 +200,4 @@ help:
 	@echo "  init-project         - 初始化项目目录结构"
 	@echo "  help                 - 显示此帮助信息"
 
-.PHONY: build build-linux-amd64 build-linux-arm64 build-linux-arm build-windows-amd64 build-windows-arm64 build-darwin-amd64 build-darwin-arm64 build-freebsd-amd64 build-all build-common clean info help dev docker-dev docker-prod fmt lint vet swagger test test-race cover benchmark mock migrate-up migrate-down install-dev-deps init-project
+.PHONY: build build-linux-amd64 build-linux-arm64 build-linux-arm build-windows-amd64 build-windows-arm64 build-darwin-amd64 build-darwin-arm64 build-freebsd-amd64 build-all build-common clean info help dev run docker-dev docker-prod fmt lint vet swagger test test-race cover benchmark mock migrate-up migrate-down install-dev-deps init-project

@@ -19,21 +19,21 @@ func TestConcurrencyControl(t *testing.T) {
 		{
 			name:          "无限并发",
 			maxConcurrent: 0,
-			taskDuration:  500 * time.Millisecond, // 增加执行时间让并发更容易观察
+			taskDuration:  80 * time.Millisecond,
 			expectSkipped: false,
 			description:   "MaxConcurrent=0应该允许无限并发",
 		},
 		{
 			name:          "串行执行",
 			maxConcurrent: 1,
-			taskDuration:  500 * time.Millisecond,
+			taskDuration:  80 * time.Millisecond,
 			expectSkipped: true,
 			description:   "MaxConcurrent=1应该强制串行执行",
 		},
 		{
 			name:          "限制并发数",
 			maxConcurrent: 2,
-			taskDuration:  500 * time.Millisecond,
+			taskDuration:  80 * time.Millisecond,
 			expectSkipped: true,
 			description:   "MaxConcurrent=2应该最多允许2个并发",
 		},
@@ -70,8 +70,8 @@ func TestConcurrencyControl(t *testing.T) {
 				atomic.AddInt64(&runningCount, -1)
 			}
 
-			// 添加任务 - 每100ms执行一次
-			err := c.ScheduleJob("test-concurrent", "@every 100ms", &ConcurrencyTestJob{handler: job}, JobOptions{
+			// 添加任务 - 每50ms执行一次，缩短测试时间
+			err := c.ScheduleJob("test-concurrent", "@every 50ms", &ConcurrencyTestJob{handler: job}, JobOptions{
 				MaxConcurrent: tt.maxConcurrent,
 				Async:         true,
 			})
@@ -83,7 +83,10 @@ func TestConcurrencyControl(t *testing.T) {
 			c.Start()
 
 			// 运行足够长时间以触发多次执行
-			time.Sleep(2 * time.Second)
+			time.Sleep(400 * time.Millisecond)
+
+			// 停止调度器，等待正在执行的任务完成
+			c.Stop()
 
 			executed := atomic.LoadInt64(&totalExecuted)
 			maxConcurrentReached := atomic.LoadInt64(&maxRunning)
@@ -135,38 +138,6 @@ func (j *ConcurrencyTestJob) Run(ctx context.Context) error {
 
 // TestConcurrentTaskExecution 测试具体的并发任务执行场景
 func TestConcurrentTaskExecution(t *testing.T) {
-	c := New()
-	defer c.Stop()
-
-	var concurrentCount int64
-	var maxConcurrent int64
-
-	// 创建一个会阻塞的任务
-	blockingTask := func(ctx context.Context) {
-		current := atomic.AddInt64(&concurrentCount, 1)
-
-		// 更新最大并发记录
-		for {
-			max := atomic.LoadInt64(&maxConcurrent)
-			if current > max {
-				if atomic.CompareAndSwapInt64(&maxConcurrent, max, current) {
-					break
-				}
-			} else {
-				break
-			}
-		}
-
-		// 阻塞500ms
-		select {
-		case <-time.After(500 * time.Millisecond):
-		case <-ctx.Done():
-		}
-
-		atomic.AddInt64(&concurrentCount, -1)
-	}
-
-	// 测试不同的并发设置
 	testCases := []struct {
 		name      string
 		maxConcur int
@@ -178,12 +149,39 @@ func TestConcurrentTaskExecution(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
+		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			// 重置计数器
-			atomic.StoreInt64(&concurrentCount, 0)
-			atomic.StoreInt64(&maxConcurrent, 0)
+			c := New()
+			defer c.Stop()
 
-			err := c.ScheduleJob("concurrent-test", "@every 100ms", &ConcurrencyTestJob{handler: blockingTask}, JobOptions{
+			var concurrentCount int64
+			var maxConcurrent int64
+
+			blockingTask := func(ctx context.Context) {
+				current := atomic.AddInt64(&concurrentCount, 1)
+
+				// 更新最大并发记录
+				for {
+					max := atomic.LoadInt64(&maxConcurrent)
+					if current > max {
+						if atomic.CompareAndSwapInt64(&maxConcurrent, max, current) {
+							break
+						}
+					} else {
+						break
+					}
+				}
+
+				// 阻塞500ms
+				select {
+				case <-time.After(500 * time.Millisecond):
+				case <-ctx.Done():
+				}
+
+				atomic.AddInt64(&concurrentCount, -1)
+			}
+
+			err := c.ScheduleJob("concurrent-test", "@every 50ms", &ConcurrencyTestJob{handler: blockingTask}, JobOptions{
 				MaxConcurrent: tc.maxConcur,
 				Async:         true,
 			})
@@ -192,22 +190,26 @@ func TestConcurrentTaskExecution(t *testing.T) {
 			}
 
 			c.Start()
-			time.Sleep(2 * time.Second) // 运行2秒
+			time.Sleep(500 * time.Millisecond)
 			c.Stop()
 
 			maxReached := atomic.LoadInt64(&maxConcurrent)
 			t.Logf("%s: 实际最大并发数 = %d, 期望最大值 = %d", tc.name, maxReached, tc.expectMax)
 
-			if tc.maxConcur > 0 && maxReached > tc.expectMax {
-				t.Errorf("并发控制失效: 期望最大并发 <= %d, 实际 = %d", tc.expectMax, maxReached)
+			switch tc.maxConcur {
+			case 0:
+				if maxReached < tc.expectMax {
+					t.Errorf("无限并发未达到预期并发度，实际=%d，期望>=%d", maxReached, tc.expectMax)
+				}
+			case 1:
+				if maxReached != tc.expectMax {
+					t.Errorf("串行执行最大并发应为1，实际=%d", maxReached)
+				}
+			default:
+				if maxReached > tc.expectMax {
+					t.Errorf("最大并发应 <= %d，实际=%d", tc.expectMax, maxReached)
+				}
 			}
-
-			if tc.maxConcur == 1 && maxReached != 1 {
-				t.Errorf("串行执行失效: 期望最大并发 = 1, 实际 = %d", maxReached)
-			}
-
-			// 清理任务
-			c.Remove("concurrent-test")
 		})
 	}
 }

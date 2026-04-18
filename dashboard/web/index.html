@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cron Dashboard - 任务调度管理面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
+</head>
+<body class="bg-gray-100" x-data="dashboard">
+    <!-- 顶部导航 -->
+    <nav class="bg-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <h1 class="text-2xl font-bold text-gray-800">
+                        <span class="text-blue-600">Cron</span> 任务调度管理面板
+                    </h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button @click="activeTab = 'tasks'"
+                            :class="activeTab === 'tasks' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-600'"
+                            class="px-3 py-2 font-medium">
+                        任务列表
+                    </button>
+                    <button @click="activeTab = 'history'"
+                            :class="activeTab === 'history' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-600'"
+                            class="px-3 py-2 font-medium">
+                        执行历史
+                    </button>
+                    <button @click="activeTab = 'stats'"
+                            :class="activeTab === 'stats' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-600'"
+                            class="px-3 py-2 font-medium">
+                        统计分析
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主内容区 -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- 统计卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8" x-show="stats">
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="text-gray-500 text-sm">总任务数</div>
+                <div class="text-3xl font-bold text-gray-800" x-text="stats.totalTasks || 0"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="text-gray-500 text-sm">运行中</div>
+                <div class="text-3xl font-bold text-green-600" x-text="stats.runningTasks || 0"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="text-gray-500 text-sm">成功率</div>
+                <div class="text-3xl font-bold text-blue-600" x-text="(stats.successRate || 0).toFixed(1) + '%'"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="text-gray-500 text-sm">历史记录</div>
+                <div class="text-3xl font-bold text-purple-600" x-text="stats.historyRecords || 0"></div>
+            </div>
+        </div>
+
+        <!-- 任务列表标签页 -->
+        <div x-show="activeTab === 'tasks'" class="bg-white rounded-lg shadow">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <div class="flex items-center space-x-3">
+                        <h2 class="text-xl font-semibold text-gray-800">任务列表</h2>
+                        <input placeholder="按标签过滤，如 env=prod" x-model="labelFilter" @input="applyLabelFilter"
+                               class="px-3 py-2 border rounded" />
+                    </div>
+                    <button @click="loadTasks" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                        刷新
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">任务ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">熔断/暂停</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Misfire</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">标签</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">下次执行</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">暂停至</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">运行次数</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">成功/失败/跳过</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">平均耗时</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+            <template x-for="task in filteredTasks" :key="task.id">
+                                <tr>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="task.id"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span :class="task.isRunning ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'"
+                                              class="px-2 py-1 text-xs font-semibold rounded-full">
+                                            <span x-text="task.isRunning ? '运行中' : '等待中'"></span>
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">
+                                        <template x-if="task.pauseUntil">
+                                            <span>暂停至 <span x-text="formatTime(task.pauseUntil)"></span></span>
+                                        </template>
+                                        <template x-if="!task.pauseUntil">
+                                            <span>-</span>
+                                        </template>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        <template x-for="(v,k) in task.labels" :key="k">
+                                            <span class="inline-flex items-center px-2 py-1 mr-1 text-xs bg-gray-100 text-gray-700 rounded" x-text="k + '=' + v"></span>
+                                        </template>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatTime(task.nextRun)"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.pauseUntil ? formatTime(task.pauseUntil) : '-' "></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.runCount"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.misfirePolicy || '-' "></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <span class="text-green-600" x-text="task.successCount"></span> /
+                                        <span class="text-red-600" x-text="task.failCount"></span> /
+                                        <span class="text-amber-600" x-text="task.skippedCount"></span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDuration(task.avgDuration)"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                        <div class="flex space-x-3">
+                                            <button @click="runTask(task.id)" class="text-blue-600 hover:text-blue-900">立即执行</button>
+                                            <button @click="pauseTask(task.id)" class="text-amber-600 hover:text-amber-900">暂停</button>
+                                            <button @click="resumeTask(task.id)" class="text-green-600 hover:text-green-900">恢复</button>
+                                            <button @click="updateSchedule(task.id)" class="text-purple-600 hover:text-purple-900">改表达式</button>
+                                            <button @click="removeTask(task.id)" class="text-red-600 hover:text-red-900">移除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 执行历史标签页 -->
+        <div x-show="activeTab === 'history'" class="bg-white rounded-lg shadow">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-semibold text-gray-800">执行历史</h2>
+                    <div class="flex space-x-2">
+                        <select x-model="historyFilter.taskId" @change="loadHistory"
+                                class="px-3 py-2 border rounded">
+                            <option value="">全部任务</option>
+                            <template x-for="task in tasks" :key="task.id">
+                                <option :value="task.id" x-text="task.id"></option>
+                            </template>
+                        </select>
+                        <select x-model="historyFilter.status" @change="loadHistory"
+                                class="px-3 py-2 border rounded">
+                            <option value="">全部状态</option>
+                            <option value="success">仅成功</option>
+                            <option value="failed">仅失败</option>
+                        </select>
+                        <button @click="loadHistory" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                            刷新
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">任务ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">开始时间</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">耗时</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">状态</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">重试次数</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">错误信息</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <template x-for="record in history.records" :key="record.id">
+                                <tr>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900" x-text="record.taskID"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatTime(record.startTime)"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDuration(record.duration)"></td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span :class="record.success ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                                              class="px-2 py-1 text-xs font-semibold rounded-full">
+                                            <span x-text="record.success ? '成功' : '失败'"></span>
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="record.retryCount"></td>
+                                    <td class="px-6 py-4 text-sm text-red-600" x-text="record.error || '-'"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- 分页 -->
+                <div class="flex justify-between items-center mt-4" x-show="history.totalPages > 1">
+                    <div class="text-sm text-gray-600">
+                        第 <span x-text="history.page"></span> / <span x-text="history.totalPages"></span> 页，
+                        共 <span x-text="history.total"></span> 条记录
+                    </div>
+                    <div class="flex space-x-2">
+                        <button @click="historyPage--; loadHistory()" :disabled="historyPage <= 1"
+                                class="px-3 py-1 border rounded disabled:opacity-50">
+                            上一页
+                        </button>
+                        <button @click="historyPage++; loadHistory()" :disabled="historyPage >= history.totalPages"
+                                class="px-3 py-1 border rounded disabled:opacity-50">
+                            下一页
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 统计分析标签页 -->
+        <div x-show="activeTab === 'stats'" class="space-y-6">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">系统统计</h2>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="border-l-4 border-blue-500 pl-4">
+                        <div class="text-gray-500 text-sm">总运行次数</div>
+                        <div class="text-2xl font-bold text-gray-800" x-text="stats.totalRuns || 0"></div>
+                    </div>
+                    <div class="border-l-4 border-green-500 pl-4">
+                        <div class="text-gray-500 text-sm">成功次数</div>
+                        <div class="text-2xl font-bold text-green-600" x-text="stats.successRuns || 0"></div>
+                    </div>
+                    <div class="border-l-4 border-red-500 pl-4">
+                        <div class="text-gray-500 text-sm">失败次数</div>
+                        <div class="text-2xl font-bold text-red-600" x-text="stats.failedRuns || 0"></div>
+                    </div>
+                    <div class="border-l-4 border-yellow-500 pl-4">
+                        <div class="text-gray-500 text-sm">总重试次数</div>
+                        <div class="text-2xl font-bold text-yellow-600" x-text="stats.totalRetries || 0"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">执行时长</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="border-l-4 border-purple-500 pl-4">
+                        <div class="text-gray-500 text-sm">平均执行时长</div>
+                        <div class="text-2xl font-bold text-purple-600" x-text="stats.avgDuration || '0s'"></div>
+                    </div>
+                    <div class="border-l-4 border-indigo-500 pl-4">
+                        <div class="text-gray-500 text-sm">总执行时长</div>
+                        <div class="text-2xl font-bold text-indigo-600" x-text="stats.totalDuration || '0s'"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('dashboard', () => ({
+                activeTab: 'tasks',
+                tasks: [],
+                filteredTasks: [],
+                labelFilter: '',
+                history: {
+                    records: [],
+                    total: 0,
+                    page: 1,
+                    pageSize: 50,
+                    totalPages: 0
+                },
+                stats: null,
+                historyFilter: {
+                    taskId: '',
+                    status: ''
+                },
+                historyPage: 1,
+
+                init() {
+                    this.loadAll();
+                    // 每 5 秒自动刷新
+                    setInterval(() => {
+                        if (this.activeTab === 'tasks') {
+                            this.loadTasks();
+                        } else if (this.activeTab === 'history') {
+                            this.loadHistory();
+                        }
+                        this.loadStats();
+                    }, 5000);
+                },
+
+                async loadAll() {
+                    await Promise.all([
+                        this.loadTasks(),
+                        this.loadStats(),
+                        this.loadHistory()
+                    ]);
+                },
+
+                async loadTasks() {
+                    try {
+                        const params = this.labelFilter ? `?labelKey=${encodeURIComponent(this.labelKey)}&labelVal=${encodeURIComponent(this.labelVal)}` : '';
+                        const response = await fetch(`/api/tasks${params}`);
+                        this.tasks = await response.json();
+                        this.applyLabelFilter();
+                    } catch (error) {
+                        console.error('Failed to load tasks:', error);
+                    }
+                },
+
+                applyLabelFilter() {
+                    if (!this.labelFilter) {
+                        this.filteredTasks = this.tasks;
+                        return;
+                    }
+                    const [k, v] = this.labelFilter.split('=');
+                    this.labelKey = k; this.labelVal = v;
+                    if (!k || v === undefined) {
+                        this.filteredTasks = this.tasks;
+                        return;
+                    }
+                    this.filteredTasks = this.tasks.filter(t => t.labels && t.labels[k] === v);
+                },
+
+                async loadStats() {
+                    try {
+                        const response = await fetch('/api/stats');
+                        this.stats = await response.json();
+                    } catch (error) {
+                        console.error('Failed to load stats:', error);
+                    }
+                },
+
+                async loadHistory() {
+                    try {
+                        const params = new URLSearchParams({
+                            limit: '50',
+                            offset: String((this.historyPage - 1) * 50)
+                        });
+
+                        if (this.historyFilter.taskId) {
+                            params.set('taskId', this.historyFilter.taskId);
+                        }
+
+                        if (this.historyFilter.status === 'success') {
+                            params.set('successOnly', 'true');
+                        } else if (this.historyFilter.status === 'failed') {
+                            params.set('failedOnly', 'true');
+                        }
+
+                        const response = await fetch(`/api/history?${params}`);
+                        this.history = await response.json();
+                    } catch (error) {
+                        console.error('Failed to load history:', error);
+                    }
+                },
+
+                async removeTask(taskId) {
+                    if (!confirm(`确定要移除任务 ${taskId} 吗？`)) {
+                        return;
+                    }
+
+                    try {
+                        const response = await fetch(`/api/tasks/${taskId}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (response.ok) {
+                            await this.loadTasks();
+                            alert('任务已移除');
+                        } else {
+                            alert('移除任务失败');
+                        }
+                    } catch (error) {
+                        console.error('Failed to remove task:', error);
+                        alert('移除任务失败');
+                    }
+                },
+
+                async runTask(taskId) {
+                    try {
+                        const res = await fetch(`/api/tasks/${taskId}/run`, { method: 'POST' });
+                        if (!res.ok) throw new Error();
+                        await this.loadTasks();
+                        alert('已触发执行');
+                    } catch (e) {
+                        alert('触发失败');
+                    }
+                },
+
+                async pauseTask(taskId) {
+                    try {
+                        const res = await fetch(`/api/tasks/${taskId}/pause`, { method: 'POST' });
+                        if (!res.ok) throw new Error();
+                        await this.loadTasks();
+                        alert('已暂停');
+                    } catch (e) {
+                        alert('暂停失败');
+                    }
+                },
+
+                async resumeTask(taskId) {
+                    try {
+                        const res = await fetch(`/api/tasks/${taskId}/resume`, { method: 'POST' });
+                        if (!res.ok) throw new Error();
+                        await this.loadTasks();
+                        alert('已恢复');
+                    } catch (e) {
+                        alert('恢复失败');
+                    }
+                },
+
+                async updateSchedule(taskId) {
+                    const schedule = prompt('请输入新的 cron 表达式');
+                    if (!schedule) return;
+                    try {
+                        const res = await fetch(`/api/tasks/${taskId}/schedule`, {
+                            method: 'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ schedule })
+                        });
+                        if (!res.ok) throw new Error();
+                        await this.loadTasks();
+                        alert('已更新表达式');
+                    } catch (e) {
+                        alert('更新失败');
+                    }
+                },
+
+                formatTime(time) {
+                    if (!time) return '-';
+                    const date = new Date(time);
+                    return date.toLocaleString('zh-CN');
+                },
+
+                formatDuration(duration) {
+                    if (!duration) return '0s';
+                    if (typeof duration === 'number') {
+                        // 纳秒转换
+                        const ms = duration / 1000000;
+                        if (ms < 1000) {
+                            return `${ms.toFixed(0)}ms`;
+                        }
+                        return `${(ms / 1000).toFixed(2)}s`;
+                    }
+                    return String(duration);
+                }
+            }));
+        });
+    </script>
+</body>
+</html>

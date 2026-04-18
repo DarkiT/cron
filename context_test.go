@@ -153,3 +153,53 @@ func TestDefaultContextBehavior(t *testing.T) {
 		t.Error("Default scheduler should be running")
 	}
 }
+
+// TestStopCancelsRunnerContext 测试 Stop 后 runner context 被正确取消
+func TestStopCancelsRunnerContext(t *testing.T) {
+	c := New()
+
+	// 用于检测任务上下文是否被取消
+	taskCtxCancelled := make(chan bool, 1)
+	taskStarted := make(chan bool, 1)
+
+	// 添加一个长时间运行的任务
+	err := c.Schedule("long-running", "*/10 * * * * *", func(ctx context.Context) {
+		taskStarted <- true
+		// 等待上下文取消
+		<-ctx.Done()
+		taskCtxCancelled <- true
+	}, JobOptions{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("Failed to schedule task: %v", err)
+	}
+
+	err = c.Start()
+	if err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
+
+	// 立即触发任务
+	err = c.RunNow("long-running")
+	if err != nil {
+		t.Fatalf("Failed to run task immediately: %v", err)
+	}
+
+	// 等待任务开始
+	select {
+	case <-taskStarted:
+		// 任务已开始
+	case <-time.After(1 * time.Second):
+		t.Fatal("Task did not start in time")
+	}
+
+	// 停止调度器
+	c.Stop()
+
+	// 验证任务的上下文被取消
+	select {
+	case <-taskCtxCancelled:
+		// 成功：任务上下文被取消
+	case <-time.After(2 * time.Second):
+		t.Error("Task context was not cancelled after scheduler Stop")
+	}
+}

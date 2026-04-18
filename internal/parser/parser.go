@@ -196,6 +196,17 @@ func getField(field string, r bounds) (uint64, error) {
 	return bits, nil
 }
 
+// specialFieldInfo 保存特殊字段解析的结果
+type specialFieldInfo struct {
+	bits                   uint64
+	lastDayOfMonth         bool
+	lastWorkdayOfMonth     bool
+	workdaysOfMonth        map[int]bool
+	lastWeekDaysOfWeek     map[int]bool
+	specificWeekDaysOfWeek map[int]bool
+	isRestricted           bool // 是否受限（不是 *）
+}
+
 // getRange returns the bits indicated by the given expression:
 //
 //	number | number "-" number [ "/" number ]
@@ -329,4 +340,132 @@ func getBits(min, max, step uint) uint64 {
 // all returns all bits within the given bounds.  (plus the star bit)
 func all(r bounds) uint64 {
 	return getBits(r.min, r.max, 1) | starBit
+}
+
+// getDomFieldSpecial 解析 Dom 字段的特殊语法（L/W/LW）
+func getDomFieldSpecial(field string, r bounds) (*specialFieldInfo, error) {
+	info := &specialFieldInfo{
+		bits:            0,
+		workdaysOfMonth: make(map[int]bool),
+		isRestricted:    true,
+	}
+
+	// 检查是否是通配符
+	if field == "*" || field == "?" {
+		info.bits = all(r)
+		info.isRestricted = false
+		return info, nil
+	}
+
+	// 解析逗号分隔的多个表达式
+	ranges := strings.FieldsFunc(field, func(r rune) bool { return r == ',' })
+	for _, expr := range ranges {
+		exprLower := strings.ToLower(strings.TrimSpace(expr))
+
+		// L - 月末最后一天
+		if exprLower == "l" {
+			info.lastDayOfMonth = true
+			continue
+		}
+
+		// LW - 月末最后一个工作日
+		if exprLower == "lw" || exprLower == "wl" {
+			info.lastWorkdayOfMonth = true
+			continue
+		}
+
+		// 15W - 第15天最近的工作日
+		if strings.HasSuffix(exprLower, "w") {
+			dayStr := strings.TrimSuffix(exprLower, "w")
+			day, err := mustParseInt(dayStr)
+			if err != nil {
+				return nil, fmt.Errorf("invalid workday syntax '%s': %s", expr, err)
+			}
+			if day < r.min || day > r.max {
+				return nil, fmt.Errorf("workday %d out of range [%d-%d]", day, r.min, r.max)
+			}
+			info.workdaysOfMonth[int(day)] = true
+			continue
+		}
+
+		// 标准语法：数字、范围、步长
+		bit, err := getRange(expr, r)
+		if err != nil {
+			return nil, err
+		}
+		info.bits |= bit
+	}
+
+	return info, nil
+}
+
+// getDowFieldSpecial 解析 Dow 字段的特殊语法（L/#）
+func getDowFieldSpecial(field string, r bounds) (*specialFieldInfo, error) {
+	info := &specialFieldInfo{
+		bits:                   0,
+		lastWeekDaysOfWeek:     make(map[int]bool),
+		specificWeekDaysOfWeek: make(map[int]bool),
+		isRestricted:           true,
+	}
+
+	// 检查是否是通配符
+	if field == "*" || field == "?" {
+		info.bits = all(r)
+		info.isRestricted = false
+		return info, nil
+	}
+
+	// 解析逗号分隔的多个表达式
+	ranges := strings.FieldsFunc(field, func(r rune) bool { return r == ',' })
+	for _, expr := range ranges {
+		exprLower := strings.ToLower(strings.TrimSpace(expr))
+
+		// 5L - 每月最后一个星期五
+		if strings.HasSuffix(exprLower, "l") {
+			dowStr := strings.TrimSuffix(exprLower, "l")
+			dow, err := parseIntOrName(dowStr, r.names)
+			if err != nil {
+				return nil, fmt.Errorf("invalid last weekday syntax '%s': %s", expr, err)
+			}
+			if dow < r.min || dow > r.max {
+				return nil, fmt.Errorf("day-of-week %d out of range [%d-%d]", dow, r.min, r.max)
+			}
+			info.lastWeekDaysOfWeek[int(dow)] = true
+			continue
+		}
+
+		// 5#3 - 每月第3个星期五
+		if strings.Contains(exprLower, "#") {
+			parts := strings.Split(exprLower, "#")
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("invalid specific weekday syntax '%s'", expr)
+			}
+			dow, err := parseIntOrName(parts[0], r.names)
+			if err != nil {
+				return nil, fmt.Errorf("invalid specific weekday syntax '%s': %s", expr, err)
+			}
+			week, err := mustParseInt(parts[1])
+			if err != nil {
+				return nil, fmt.Errorf("invalid week number in '%s': %s", expr, err)
+			}
+			if dow < r.min || dow > r.max {
+				return nil, fmt.Errorf("day-of-week %d out of range [%d-%d]", dow, r.min, r.max)
+			}
+			if week < 1 || week > 5 {
+				return nil, fmt.Errorf("week number %d out of range [1-5]", week)
+			}
+			// 编码为 (week-1)*7 + dow，参考 supercronic 的实现
+			info.specificWeekDaysOfWeek[int((week-1)*7+dow%7)] = true
+			continue
+		}
+
+		// 标准语法：数字、范围、步长
+		bit, err := getRange(expr, r)
+		if err != nil {
+			return nil, err
+		}
+		info.bits |= bit
+	}
+
+	return info, nil
 }

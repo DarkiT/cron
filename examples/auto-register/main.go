@@ -23,13 +23,15 @@ type BackupJob struct {
 
 var backupCounter = int64(0)
 
+var reg = cron.NewJobRegistry()
+
 func init() {
-	// 在包初始化时自动注册任务
+	// 在包初始化时注册到实例化注册表，避免全局共享
 	job := &BackupJob{
 		name:    "自动备份",
 		counter: &backupCounter,
 	}
-	cron.RegisterJob(job)
+	reg.SafeRegister(job)
 }
 
 func (j *BackupJob) Name() string {
@@ -63,12 +65,12 @@ type CleanupJob struct {
 var cleanupCounter = int64(0)
 
 func init() {
-	// 在包初始化时自动注册任务
+	// 在包初始化时注册到实例化注册表
 	job := &CleanupJob{
 		name:    "自动清理",
 		counter: &cleanupCounter,
 	}
-	cron.RegisterJob(job)
+	reg.SafeRegister(job)
 }
 
 func (j *CleanupJob) Name() string {
@@ -99,14 +101,14 @@ func main() {
 	fmt.Println("==============================")
 
 	// 显示已注册的任务
-	registered := cron.ListRegistered()
+	registered := reg.List()
 	fmt.Printf("📋 已自动注册的任务: %v\n", registered)
 
 	// 创建调度器
 	scheduler := cron.New()
 
 	// 一键调度所有已注册的任务
-	err := scheduler.ScheduleRegistered(cron.JobOptions{
+	err := scheduler.ScheduleFromRegistry(reg, cron.JobOptions{
 		Timeout: 5 * time.Second,
 		Async:   true,
 	})
