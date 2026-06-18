@@ -25,11 +25,11 @@
 # 1. Fork项目到您的GitHub账户
 
 # 2. 克隆您的Fork
-git clone https://github.com/YOUR_USERNAME/PROJECT_NAME.git
-cd PROJECT_NAME
+git clone https://github.com/darkit/cron.git
+cd cron
 
 # 3. 添加上游仓库
-git remote add upstream https://github.com/ORIGINAL_OWNER/PROJECT_NAME.git
+git remote add upstream https://github.com/darkit/cron.git
 
 # 4. 安装依赖
 go mod tidy
@@ -53,7 +53,6 @@ git checkout -b fix/issue-number
 ```
 
 #### 开发规范
-- 遵循[技术选型和架构](docs/技术选型和架构.md)中的约定
 - 使用中文编写注释和文档
 - 确保代码通过所有测试
 - 添加必要的测试用例
@@ -428,8 +427,6 @@ go test -race ./...
 ### 沟通渠道
 - **GitHub Issues**: 报告问题和功能建议
 - **GitHub Discussions**: 技术讨论和问答
-- **邮件**: [maintainer@example.com]
-- **微信群**: [群二维码]
 
 ### 响应时间
 - Bug报告：24小时内响应
@@ -448,17 +445,7 @@ go test -race ./...
 
 ##  致谢
 
-感谢所有为本项目做出贡献的开发者！您的每一个贡献都让项目变得更好。
-
-### 主要贡献者
-- [@contributor1](https://github.com/contributor1) - 核心功能开发
-- [@contributor2](https://github.com/contributor2) - 文档完善
-- [@contributor3](https://github.com/contributor3) - 测试增强
-
-### 特别感谢
-- 所有提交Issue的用户
-- 参与讨论的社区成员
-- 提供反馈的早期用户
+感谢所有为本项目做出贡献的开发者！
 
 ---
 
