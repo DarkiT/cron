@@ -90,7 +90,10 @@ func TestServerStartStop(t *testing.T) {
 	}
 	defer storage.Close()
 
-	recorder := history.NewHistoryRecorder(storage)
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
 	defer recorder.Close()
 
 	c := cron.New(cron.WithHistoryRecorder(recorder))
@@ -104,7 +107,7 @@ func TestServerStartStop(t *testing.T) {
 	defer c.Stop()
 
 	// 使用一个随机端口避免冲突
-	server := NewServer(c, ":18080")
+	server := NewServer(c, "127.0.0.1:0")
 
 	// 启动服务器
 	if err := server.Start(); err != nil {
@@ -113,9 +116,10 @@ func TestServerStartStop(t *testing.T) {
 
 	// 等待服务器启动
 	time.Sleep(100 * time.Millisecond)
+	baseURL := "http://" + server.addr
 
 	// 测试 API 端点是否可访问
-	resp, err := http.Get("http://localhost:18080/api/tasks")
+	resp, err := http.Get(baseURL + "/api/tasks")
 	if err != nil {
 		t.Fatalf("Failed to connect to server: %v", err)
 	}
@@ -141,7 +145,7 @@ func TestServerStartStop(t *testing.T) {
 
 	// 验证服务器已停止（应该无法连接）
 	time.Sleep(100 * time.Millisecond)
-	_, err = http.Get("http://localhost:18080/api/tasks")
+	_, err = http.Get(baseURL + "/api/tasks")
 	if err == nil {
 		t.Error("Server should have been stopped")
 	}
@@ -157,7 +161,10 @@ func TestServerAPIEndpoints(t *testing.T) {
 	}
 	defer storage.Close()
 
-	recorder := history.NewHistoryRecorder(storage)
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
 	defer recorder.Close()
 
 	c := cron.New(cron.WithHistoryRecorder(recorder))
@@ -169,13 +176,14 @@ func TestServerAPIEndpoints(t *testing.T) {
 	c.Start()
 	defer c.Stop()
 
-	server := NewServer(c, ":18081")
+	server := NewServer(c, "127.0.0.1:0")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop()
 
 	time.Sleep(100 * time.Millisecond)
+	baseURL := "http://" + server.addr
 
 	// 测试各个端点
 	endpoints := []struct {
@@ -190,7 +198,7 @@ func TestServerAPIEndpoints(t *testing.T) {
 	}
 
 	for _, endpoint := range endpoints {
-		resp, err := http.Get("http://localhost:18081" + endpoint.path)
+		resp, err := http.Get(baseURL + endpoint.path)
 		if err != nil {
 			t.Errorf("Failed to access %s: %v", endpoint.path, err)
 			continue
@@ -209,16 +217,17 @@ func TestServerCORS(t *testing.T) {
 	c := cron.New()
 	defer c.Stop()
 
-	server := NewServer(c, ":18082")
+	server := NewServer(c, "127.0.0.1:0")
 	if err := server.Start(); err != nil {
 		t.Fatalf("Failed to start server: %v", err)
 	}
 	defer server.Stop()
 
 	time.Sleep(100 * time.Millisecond)
+	baseURL := "http://" + server.addr
 
 	// 创建带有 Origin 头的请求
-	req, err := http.NewRequest("GET", "http://localhost:18082/api/tasks", nil)
+	req, err := http.NewRequest("GET", baseURL+"/api/tasks", nil)
 	if err != nil {
 		t.Fatalf("Failed to create request: %v", err)
 	}
@@ -233,8 +242,8 @@ func TestServerCORS(t *testing.T) {
 
 	// 验证 CORS 头
 	corsOrigin := resp.Header.Get("Access-Control-Allow-Origin")
-	if corsOrigin != "*" {
-		t.Errorf("Expected CORS origin '*', got '%s'", corsOrigin)
+	if corsOrigin != "http://example.com" {
+		t.Errorf("Expected reflected CORS origin, got '%s'", corsOrigin)
 	}
 
 	corsMethods := resp.Header.Get("Access-Control-Allow-Methods")
@@ -366,6 +375,10 @@ func TestServerWriteEndpointsLifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("schedule failed: %v", err)
 	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start scheduler failed: %v", err)
+	}
+	defer c.Stop()
 
 	server := NewServer(c, ":0")
 	ts := newDashboardHTTPServer(t, server)
@@ -491,6 +504,10 @@ func TestServerWriteEndpointsRequireAPIKey(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("schedule failed: %v", err)
 	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start scheduler failed: %v", err)
+	}
+	defer c.Stop()
 
 	server := NewServer(c, ":0", WithAPIKey("secret-key"))
 	ts := newDashboardHTTPServer(t, server)
@@ -633,5 +650,19 @@ func TestServerMethodMismatchReturns405(t *testing.T) {
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected 405 for method mismatch, got %d body=%s", resp.StatusCode, string(body))
+	}
+}
+
+func TestServerStartReturnsErrorOnPortConflict(t *testing.T) {
+	c := cron.New()
+	defer c.Stop()
+	server1 := NewServer(c, "127.0.0.1:0")
+	if err := server1.Start(); err != nil {
+		t.Fatalf("first start failed: %v", err)
+	}
+	defer server1.Stop()
+	server2 := NewServer(c, server1.server.Addr)
+	if err := server2.Start(); err == nil {
+		t.Fatal("expected port conflict error")
 	}
 }

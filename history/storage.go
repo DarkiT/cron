@@ -30,7 +30,7 @@ func normalizeStorageTaskID(taskID string) (string, error) {
 // 实现此接口的类型可以接收文件读取、解析等操作中的错误信息
 type Logger interface {
 	// Warn 记录警告级别的日志
-	Warn(msg string, keysAndValues ...interface{})
+	Warn(msg string, keysAndValues ...any)
 }
 
 // FileStorage 基于文件系统的历史记录存储
@@ -106,12 +106,34 @@ func (fs *FileStorage) Save(record *ExecutionRecord) error {
 	if err != nil {
 		return fmt.Errorf("failed to open history file: %w", err)
 	}
-	defer file.Close()
 
 	if _, err := file.Write(append(data, '\n')); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("failed to append history record: %w", err)
 	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("failed to close history file: %w", err)
+	}
 	return nil
+}
+
+func safeWarn(logger Logger, msg string, keysAndValues ...any) {
+	if logger == nil {
+		return
+	}
+
+	defer func() {
+		_ = recover()
+	}()
+
+	logger.Warn(msg, keysAndValues...)
+}
+
+func closeFile(file *os.File) error {
+	if file == nil {
+		return nil
+	}
+	return file.Close()
 }
 
 // Query 根据过滤器查询记录
@@ -129,40 +151,18 @@ func (fs *FileStorage) Query(filter RecordFilter) ([]*ExecutionRecord, error) {
 	for _, taskDir := range taskDirs {
 		dateFiles, err := fs.getDateFiles(taskDir, filter.StartTime, filter.EndTime)
 		if err != nil {
-			// 记录目录读取错误，但继续处理其他任务目录（panic-safe）
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// 防止 logger 实现 panic 导致程序崩溃
-						// 静默忽略，保持存储层稳定性
-					}
-				}()
-				if fs.logger != nil {
-					fs.logger.Warn("无法读取任务目录下的日期文件",
-						"taskDir", taskDir,
-						"error", err.Error())
-				}
-			}()
+			safeWarn(fs.logger, "无法读取任务目录下的日期文件",
+				"taskDir", taskDir,
+				"error", err.Error())
 			continue
 		}
 
 		for _, dateFile := range dateFiles {
 			records, err := fs.readRecordsFromFile(dateFile)
 			if err != nil {
-				// 记录文件读取错误，但继续处理其他文件（panic-safe）
-				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							// 防止 logger 实现 panic 导致程序崩溃
-							// 静默忽略，保持存储层稳定性
-						}
-					}()
-					if fs.logger != nil {
-						fs.logger.Warn("读取历史记录文件失败",
-							"file", dateFile,
-							"error", err.Error())
-					}
-				}()
+				safeWarn(fs.logger, "读取历史记录文件失败",
+					"file", dateFile,
+					"error", err.Error())
 				continue
 			}
 			for _, record := range records {
@@ -234,20 +234,9 @@ func (fs *FileStorage) Delete(before time.Time) (int, error) {
 	for _, taskDir := range taskDirs {
 		entries, err := os.ReadDir(taskDir)
 		if err != nil {
-			// 记录目录读取错误，但继续处理其他任务目录（panic-safe）
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// 防止 logger 实现 panic 导致程序崩溃
-						// 静默忽略，保持存储层稳定性
-					}
-				}()
-				if fs.logger != nil {
-					fs.logger.Warn("无法读取任务目录以进行删除操作",
-						"taskDir", taskDir,
-						"error", err.Error())
-				}
-			}()
+			safeWarn(fs.logger, "无法读取任务目录以进行删除操作",
+				"taskDir", taskDir,
+				"error", err.Error())
 			continue
 		}
 
@@ -262,20 +251,9 @@ func (fs *FileStorage) Delete(before time.Time) (int, error) {
 				if err == nil {
 					deletedCount += len(records)
 				} else {
-					// 即使读取失败，也记录日志并尝试删除文件（panic-safe）
-					func() {
-						defer func() {
-							if r := recover(); r != nil {
-								// 防止 logger 实现 panic 导致程序崩溃
-								// 静默忽略，保持存储层稳定性
-							}
-						}()
-						if fs.logger != nil {
-							fs.logger.Warn("删除前读取记录数失败，将继续删除文件",
-								"file", filePath,
-								"error", err.Error())
-						}
-					}()
+					safeWarn(fs.logger, "删除前读取记录数失败，将继续删除文件",
+						"file", filePath,
+						"error", err.Error())
 				}
 				_ = os.Remove(filePath)
 			}
@@ -299,7 +277,6 @@ func (fs *FileStorage) readRecordsFromFile(filePath string) ([]*ExecutionRecord,
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
 	var records []*ExecutionRecord
 	scanner := bufio.NewScanner(file)
@@ -312,26 +289,19 @@ func (fs *FileStorage) readRecordsFromFile(filePath string) ([]*ExecutionRecord,
 		}
 		var rec ExecutionRecord
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			// 记录 JSON 解析错误，但继续读取下一行（panic-safe）
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// 防止 logger 实现 panic 导致程序崩溃
-						// 静默忽略，保持存储层稳定性
-					}
-				}()
-				if fs.logger != nil {
-					fs.logger.Warn("解析历史记录 JSON 失败，跳过该行",
-						"file", filePath,
-						"line", lineNum,
-						"error", err.Error())
-				}
-			}()
+			safeWarn(fs.logger, "解析历史记录 JSON 失败，跳过该行",
+				"file", filePath,
+				"line", lineNum,
+				"error", err.Error())
 			continue
 		}
 		records = append(records, &rec)
 	}
 	if err := scanner.Err(); err != nil {
+		_ = closeFile(file)
+		return nil, err
+	}
+	if err := closeFile(file); err != nil {
 		return nil, err
 	}
 	return records, nil
@@ -369,7 +339,6 @@ func (fs *FileStorage) countRecordsInFile(filePath string, filter RecordFilter) 
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
 
 	count := 0
 	scanner := bufio.NewScanner(file)
@@ -387,6 +356,10 @@ func (fs *FileStorage) countRecordsInFile(filePath string, filter RecordFilter) 
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		_ = closeFile(file)
+		return 0, err
+	}
+	if err := closeFile(file); err != nil {
 		return 0, err
 	}
 	return count, nil

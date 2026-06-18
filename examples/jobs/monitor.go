@@ -23,8 +23,7 @@ func init() {
 		name:    "系统监控",
 		counter: &monitorCounter,
 	}
-	// 使用RegisterJob，永远不会panic
-	cron.RegisterJob(job)
+	cron.SafeRegisterJob(job)
 }
 
 func (j *MonitorJob) Schedule() string {

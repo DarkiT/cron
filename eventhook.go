@@ -1,7 +1,5 @@
 package cron
 
-import "time"
-
 // NewEventLoggerHook 返回简单的事件日志钩子，仅在任务结束时记录结果
 func NewEventLoggerHook(l Logger) EventHook {
 	if l == nil {
@@ -25,7 +23,7 @@ func NewEventChannelHook(ch chan<- Event) EventHook {
 	return func(ev Event) {
 		select {
 		case ch <- ev:
-		case <-time.After(10 * time.Millisecond):
+		default:
 		}
 	}
 }

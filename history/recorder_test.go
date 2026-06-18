@@ -8,14 +8,34 @@ import (
 	"time"
 )
 
-func TestNewHistoryRecorderPanicsOnNilStorage(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic when storage is nil")
-		}
-	}()
+func cleanupRecorder(t *testing.T, recorder *HistoryRecorder) {
+	t.Helper()
+	if recorder == nil {
+		return
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("关闭记录器失败: %v", err)
+	}
+}
 
-	_ = NewHistoryRecorder(nil)
+func cleanupStorage(t *testing.T, storage Storage) {
+	t.Helper()
+	if storage == nil {
+		return
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("关闭存储失败: %v", err)
+	}
+}
+
+func TestNewHistoryRecorderReturnsErrorOnNilStorage(t *testing.T) {
+	recorder, err := NewHistoryRecorder(nil)
+	if err == nil {
+		t.Fatal("expected error when storage is nil")
+	}
+	if recorder != nil {
+		t.Fatal("expected nil recorder when storage is nil")
+	}
 }
 
 func TestNewHistoryRecorder(t *testing.T) {
@@ -24,13 +44,16 @@ func TestNewHistoryRecorder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
+	recorder, err := NewHistoryRecorder(storage)
 	if recorder == nil {
 		t.Error("记录器实例不应为 nil")
 	}
-	defer recorder.Close()
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 }
 
 func TestHistoryRecorderRecord(t *testing.T) {
@@ -39,10 +62,13 @@ func TestHistoryRecorderRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 记录成功执行
 	startTime := time.Now()
@@ -80,10 +106,13 @@ func TestHistoryRecorderRecordWithError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 记录失败执行
 	startTime := time.Now()
@@ -122,10 +151,13 @@ func TestHistoryRecorderQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 记录多个任务
 	now := time.Now()
@@ -170,14 +202,17 @@ func TestHistoryRecorderCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 记录多条记录
 	now := time.Now()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		recorder.Record("count-task", now, now.Add(1*time.Second), true, 0, nil)
 	}
 
@@ -200,10 +235,13 @@ func TestHistoryRecorderCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 记录旧记录和新记录
 	now := time.Now()
@@ -240,9 +278,12 @@ func TestHistoryRecorderClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
 
 	// 记录一些数据
 	now := time.Now()
@@ -274,16 +315,19 @@ func TestHistoryRecorderConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 并发记录
 	now := time.Now()
 	done := make(chan bool, 10)
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(index int) {
 			taskID := fmt.Sprintf("concurrent-task-%d", index)
 			recorder.Record(taskID, now, now.Add(1*time.Second), true, 0, nil)
@@ -292,7 +336,7 @@ func TestHistoryRecorderConcurrency(t *testing.T) {
 	}
 
 	// 等待所有 goroutine 完成
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 
@@ -315,14 +359,17 @@ func TestHistoryRecorderQueueFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 快速写入大量记录（超过队列缓冲）
 	now := time.Now()
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		recorder.Record("queue-task", now, now.Add(1*time.Second), true, 0, nil)
 	}
 
@@ -345,14 +392,17 @@ func TestHistoryRecorderRecordCloseConcurrentDoesNotPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
-	recorder := NewHistoryRecorder(storage)
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
 
 	var writers sync.WaitGroup
-	panicCh := make(chan interface{}, 1)
+	panicCh := make(chan any, 1)
 
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		writers.Add(1)
 		go func(index int) {
 			defer writers.Done()
@@ -365,7 +415,7 @@ func TestHistoryRecorderRecordCloseConcurrentDoesNotPanic(t *testing.T) {
 				}
 			}()
 
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				now := time.Now()
 				recorder.Record(fmt.Sprintf("task-%d", index), now, now.Add(time.Millisecond), true, 0, nil)
 			}
@@ -389,7 +439,7 @@ func TestHistoryRecorderRecordCloseConcurrentDoesNotPanic(t *testing.T) {
 // panicLogger 用于测试panic保护的日志记录器
 type panicLogger struct{}
 
-func (p *panicLogger) Warn(msg string, keysAndValues ...interface{}) {
+func (p *panicLogger) Warn(msg string, keysAndValues ...any) {
 	panic("logger panic for testing")
 }
 
@@ -400,19 +450,24 @@ func TestRecorderWithLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
 	// 测试1：验证正常logger工作
 	logger := &mockLogger{}
-	recorder := NewHistoryRecorder(storage, WithRecorderLogger(logger))
+	recorder, err := NewHistoryRecorder(storage, WithRecorderLogger(logger))
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
 
 	now := time.Now()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		recorder.Record("test-task", now, now.Add(1*time.Second), true, 0, nil)
 	}
 
 	time.Sleep(100 * time.Millisecond)
-	recorder.Close()
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("关闭记录器失败: %v", err)
+	}
 
 	// 测试2：验证panic保护 - logger panic不应导致程序崩溃
 	tmpDir2 := t.TempDir()
@@ -420,19 +475,24 @@ func TestRecorderWithLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage2.Close()
+	defer cleanupStorage(t, storage2)
 
 	// 使用会panic的logger
 	panicingLogger := &panicLogger{}
-	recorder2 := NewHistoryRecorder(storage2, WithRecorderLogger(panicingLogger))
-	defer recorder2.Close()
+	recorder2, err := NewHistoryRecorder(storage2, WithRecorderLogger(panicingLogger))
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder2)
 
 	// 删除目录以触发存储错误，进而触发logger调用
-	os.RemoveAll(tmpDir2)
+	if err := os.RemoveAll(tmpDir2); err != nil {
+		t.Fatalf("删除临时目录失败: %v", err)
+	}
 
 	// 快速填满队列，触发同步写入失败（会调用logger，但logger会panic）
 	// panic应该被捕获，程序不应崩溃
-	for i := 0; i < 150; i++ {
+	for range 150 {
 		recorder2.Record("fail-task", now, now.Add(1*time.Second), true, 0, nil)
 	}
 
@@ -450,11 +510,14 @@ func TestRecorderWithoutLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupStorage(t, storage)
 
 	// 不带日志创建记录器
-	recorder := NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("创建记录器失败: %v", err)
+	}
+	defer cleanupRecorder(t, recorder)
 
 	// 正常记录应该工作
 	now := time.Now()

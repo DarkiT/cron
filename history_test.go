@@ -11,6 +11,36 @@ import (
 	"github.com/darkit/cron/history"
 )
 
+func cleanupHistoryStorage(t *testing.T, storage history.Storage) {
+	t.Helper()
+	if storage == nil {
+		return
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("Failed to close storage: %v", err)
+	}
+}
+
+func cleanupHistoryRecorder(t *testing.T, recorder history.Recorder) {
+	t.Helper()
+	if recorder == nil {
+		return
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatalf("Failed to close recorder: %v", err)
+	}
+}
+
+func cleanupCronHistoryStorage(t *testing.T, storage *history.FileStorage) {
+	t.Helper()
+	if storage == nil {
+		return
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("Failed to close storage: %v", err)
+	}
+}
+
 // TestHistoryBasic 测试基本的历史记录功能
 func TestHistoryBasic(t *testing.T) {
 	// 创建临时目录
@@ -21,11 +51,14 @@ func TestHistoryBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupHistoryStorage(t, storage)
 
 	// 创建记录器
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
+	defer cleanupHistoryRecorder(t, recorder)
 
 	// 创建调度器
 	c := New(WithHistoryRecorder(recorder))
@@ -39,7 +72,9 @@ func TestHistoryBasic(t *testing.T) {
 		t.Fatalf("Failed to schedule task: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
 	defer c.Stop()
 
 	// 等待任务执行
@@ -86,10 +121,13 @@ func TestHistoryWithRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupHistoryStorage(t, storage)
 
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
+	defer cleanupHistoryRecorder(t, recorder)
 
 	c := New(WithHistoryRecorder(recorder))
 
@@ -109,7 +147,9 @@ func TestHistoryWithRetry(t *testing.T) {
 		t.Fatalf("Failed to schedule task: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
 
 	// 等待任务执行和重试完成（第一次执行会重试2次然后成功）
 	// 100ms 重试间隔 * 2 次重试 + 一些余量 = 至少 500ms
@@ -164,10 +204,13 @@ func TestHistoryQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupHistoryStorage(t, storage)
 
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
+	defer cleanupHistoryRecorder(t, recorder)
 
 	c := New(WithHistoryRecorder(recorder))
 
@@ -188,7 +231,9 @@ func TestHistoryQuery(t *testing.T) {
 		t.Fatalf("Failed to schedule task2: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
 	defer c.Stop()
 
 	// 等待任务执行
@@ -252,10 +297,13 @@ func TestHistoryCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupHistoryStorage(t, storage)
 
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
+	defer cleanupHistoryRecorder(t, recorder)
 
 	c := New(WithHistoryRecorder(recorder))
 
@@ -266,7 +314,9 @@ func TestHistoryCount(t *testing.T) {
 		t.Fatalf("Failed to schedule task: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
 	defer c.Stop()
 
 	// 等待多次执行
@@ -295,10 +345,13 @@ func TestHistoryRecorderContinuesAfterRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupHistoryStorage(t, storage)
 
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
+	defer cleanupHistoryRecorder(t, recorder)
 
 	c := New(WithHistoryRecorder(recorder))
 
@@ -346,7 +399,7 @@ func TestHistoryCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupHistoryStorage(t, storage)
 
 	// 手动插入一些旧记录
 	oldTime := time.Now().Add(-48 * time.Hour)
@@ -363,8 +416,11 @@ func TestHistoryCleanup(t *testing.T) {
 		t.Fatalf("Failed to save old record: %v", err)
 	}
 
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
+	defer cleanupHistoryRecorder(t, recorder)
 
 	c := New(WithHistoryRecorder(recorder))
 
@@ -374,7 +430,9 @@ func TestHistoryCleanup(t *testing.T) {
 		t.Fatalf("Failed to schedule task: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
 	time.Sleep(1000 * time.Millisecond)
 	c.Stop()
 
@@ -423,7 +481,9 @@ func TestHistoryWithoutRecorder(t *testing.T) {
 		t.Fatalf("Failed to schedule task: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Failed to start scheduler: %v", err)
+	}
 	defer c.Stop()
 
 	time.Sleep(1500 * time.Millisecond)
@@ -455,7 +515,7 @@ func TestFileStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupCronHistoryStorage(t, storage)
 
 	// 测试保存记录
 	now := time.Now()
@@ -533,11 +593,11 @@ func TestFileStorageSharding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
-	defer storage.Close()
+	defer cleanupCronHistoryStorage(t, storage)
 
 	// 保存多天的记录
 	baseTime := time.Now().Add(-3 * 24 * time.Hour)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		recordTime := baseTime.Add(time.Duration(i) * 24 * time.Hour)
 		record := &history.ExecutionRecord{
 			ID:        "task_" + recordTime.Format("20060102"),

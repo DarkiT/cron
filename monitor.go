@@ -65,11 +65,11 @@ func (m *Monitor) removeTask(id string) {
 }
 
 // recordExecution 记录任务执行
-func (m *Monitor) recordExecution(id string, duration time.Duration, success bool, retryCount int) {
-	m.recordExecutionResult(id, duration, success, retryCount, "")
+func (m *Monitor) recordExecution(id string, finishedAt time.Time, duration time.Duration, success bool, retryCount int) {
+	m.recordExecutionResult(id, finishedAt, duration, success, retryCount, "")
 }
 
-func (m *Monitor) recordExecutionResult(id string, duration time.Duration, success bool, retryCount int, lastError string) {
+func (m *Monitor) recordExecutionResult(id string, finishedAt time.Time, duration time.Duration, success bool, retryCount int, lastError string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -103,7 +103,10 @@ func (m *Monitor) recordExecutionResult(id string, duration time.Duration, succe
 		stats.MaxDuration = duration
 	}
 
-	stats.LastRun = time.Now()
+	if finishedAt.IsZero() {
+		finishedAt = time.Now()
+	}
+	stats.LastRun = finishedAt
 	stats.HasLastResult = true
 	stats.LastRunSuccess = success
 	stats.LastError = lastError

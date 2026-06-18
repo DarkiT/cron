@@ -57,7 +57,7 @@ func BenchmarkTaskExecution(b *testing.B) {
 	counter := int64(0)
 
 	// 添加多个任务
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		taskName := fmt.Sprintf("exec-task-%d", i)
 		err := c.Schedule(taskName, "*/1 * * * * *", func(ctx context.Context) {
 			atomic.AddInt64(&counter, 1)
@@ -90,7 +90,7 @@ func BenchmarkMonitoring(b *testing.B) {
 	c := New()
 
 	// 添加一些任务
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		taskName := fmt.Sprintf("monitor-task-%d", i)
 		err := c.Schedule(taskName, "*/1 * * * * *", func(ctx context.Context) {})
 		if err != nil {
@@ -116,7 +116,9 @@ func BenchmarkRegisteredJobs(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		// 注册任务
 		job := &RegisteredTestJob{id: fmt.Sprintf("reg-job-%d", i)}
-		RegisterJob(job)
+		if err := RegisterJob(job); err != nil {
+			b.Fatalf("register job failed: %v", err)
+		}
 	}
 }
 

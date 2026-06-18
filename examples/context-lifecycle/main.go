@@ -30,7 +30,7 @@ func main() {
 	counter3 := int64(0)
 
 	// 添加几个不同频率的任务
-	scheduler.Schedule("fast-task", "*/1 * * * * *", func(taskCtx context.Context) {
+	if err := scheduler.Schedule("fast-task", "*/1 * * * * *", func(taskCtx context.Context) {
 		count := atomic.AddInt64(&counter1, 1)
 		fmt.Printf("⚡ 快速任务 #%d 执行\n", count)
 
@@ -43,14 +43,17 @@ func main() {
 			// 模拟工作
 			time.Sleep(100 * time.Millisecond)
 		}
-	})
+	}); err != nil {
+		fmt.Printf("❌ 添加 fast-task 失败: %v\n", err)
+		return
+	}
 
-	scheduler.Schedule("medium-task", "*/3 * * * * *", func(taskCtx context.Context) {
+	if err := scheduler.Schedule("medium-task", "*/3 * * * * *", func(taskCtx context.Context) {
 		count := atomic.AddInt64(&counter2, 1)
 		fmt.Printf("🔄 中等任务 #%d 执行\n", count)
 
 		// 模拟长时间运行的任务，支持优雅取消
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			select {
 			case <-taskCtx.Done():
 				fmt.Printf("  ↳ 中等任务 #%d 在步骤 %d 被取消\n", count, i)
@@ -60,9 +63,12 @@ func main() {
 				fmt.Printf("  ↳ 中等任务 #%d 步骤 %d 完成\n", count, i+1)
 			}
 		}
-	})
+	}); err != nil {
+		fmt.Printf("❌ 添加 medium-task 失败: %v\n", err)
+		return
+	}
 
-	scheduler.Schedule("slow-task", "*/5 * * * * *", func(taskCtx context.Context) {
+	if err := scheduler.Schedule("slow-task", "*/5 * * * * *", func(taskCtx context.Context) {
 		count := atomic.AddInt64(&counter3, 1)
 		fmt.Printf("🐌 慢速任务 #%d 开始执行\n", count)
 
@@ -76,7 +82,10 @@ func main() {
 		case <-taskCtx.Done():
 			fmt.Printf("  ↳ 慢速任务 #%d 被提前取消\n", count)
 		}
-	})
+	}); err != nil {
+		fmt.Printf("❌ 添加 slow-task 失败: %v\n", err)
+		return
+	}
 
 	// 启动调度器
 	fmt.Printf("\n▶️  启动调度器...\n")

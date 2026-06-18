@@ -23,8 +23,7 @@ func init() {
 		name:    "自动清理",
 		counter: &cleanupCounter,
 	}
-	// 使用RegisterJob，永远不会panic
-	cron.RegisterJob(job)
+	cron.SafeRegisterJob(job)
 }
 
 func (j *CleanupJob) Schedule() string {

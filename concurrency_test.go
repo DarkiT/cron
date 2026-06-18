@@ -80,7 +80,9 @@ func TestConcurrencyControl(t *testing.T) {
 			}
 
 			// 启动调度器
-			c.Start()
+			if err := c.Start(); err != nil {
+				t.Fatalf("启动调度器失败: %v", err)
+			}
 
 			// 运行足够长时间以触发多次执行
 			time.Sleep(400 * time.Millisecond)
@@ -149,7 +151,6 @@ func TestConcurrentTaskExecution(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			c := New()
 			defer c.Stop()
@@ -189,7 +190,9 @@ func TestConcurrentTaskExecution(t *testing.T) {
 				t.Fatalf("添加任务失败: %v", err)
 			}
 
-			c.Start()
+			if err := c.Start(); err != nil {
+				t.Fatalf("启动调度器失败: %v", err)
+			}
 			time.Sleep(500 * time.Millisecond)
 			c.Stop()
 

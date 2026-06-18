@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"fmt"
+	"maps"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -58,7 +59,7 @@ func parseSchedule(spec string) (parser.Schedule, error) {
 		return parser.ParseStandard(spec)
 	}
 
-	p := parser.NewParser(parser.Second | parser.Minute | parser.Hour | parser.Dom | parser.Month | parser.Dow | parser.Descriptor)
+	p := parser.MustNewParser(parser.Second | parser.Minute | parser.Hour | parser.Dom | parser.Month | parser.Dow | parser.Descriptor)
 	return p.Parse(spec)
 }
 
@@ -137,9 +138,7 @@ func cloneJobOptions(opts JobOptions) JobOptions {
 	cloned := opts
 	if opts.Labels != nil {
 		cloned.Labels = make(map[string]string, len(opts.Labels))
-		for k, v := range opts.Labels {
-			cloned.Labels[k] = v
-		}
+		maps.Copy(cloned.Labels, opts.Labels)
 	}
 	return cloned
 }
@@ -150,9 +149,7 @@ func cloneLabels(labels map[string]string) map[string]string {
 		return nil
 	}
 	cloned := make(map[string]string, len(labels))
-	for k, v := range labels {
-		cloned[k] = v
-	}
+	maps.Copy(cloned, labels)
 	return cloned
 }
 
@@ -462,7 +459,7 @@ func (s *scheduler) updateTask(id, schedule string, opts *JobOptions) error {
 	currentRemainingRuns := runner.remainingRuns
 	currentOptions := cloneJobOptions(runner.task.Options)
 	currentLabels := cloneLabels(runner.task.Labels)
-	nextRun := time.Time{}
+	var nextRun time.Time
 	remainingRuns := currentRemainingRuns
 	if opts != nil {
 		var expired bool
@@ -533,6 +530,8 @@ func (s *scheduler) pauseTask(id string) error {
 
 // resumeTask 恢复任务调度
 func (s *scheduler) resumeTask(id string) error {
+	var expire bool
+
 	s.mu.Lock()
 	runner, exists := s.tasks[id]
 	if !exists {
@@ -545,14 +544,18 @@ func (s *scheduler) resumeTask(id string) error {
 	runner.pauseUntil = time.Time{}
 	nextRun, expired := recomputeNextRun(runner.schedule, runner.task.Options.StartAt, runner.remainingRuns, time.Now())
 	if expired {
-		runner.mu.Unlock()
-		s.mu.Unlock()
+		runner.nextRun = time.Time{}
+		expire = true
+	} else {
+		runner.nextRun = nextRun
+	}
+	runner.mu.Unlock()
+	s.mu.Unlock()
+
+	if expire {
 		s.expireTask(id)
 		return nil
 	}
-	runner.nextRun = nextRun
-	runner.mu.Unlock()
-	s.mu.Unlock()
 
 	if s.monitor != nil {
 		s.monitor.setPauseUntil(id, time.Time{})
@@ -564,17 +567,28 @@ func (s *scheduler) resumeTask(id string) error {
 func (s *scheduler) runNow(id string) error {
 	s.mu.RLock()
 	runner, exists := s.tasks[id]
+	running := s.running
 	s.mu.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("task %s not found", id)
+	}
+	if !running {
+		return fmt.Errorf("scheduler is not running")
+	}
+
+	runner.mu.RLock()
+	paused := runner.paused
+	runner.mu.RUnlock()
+	if paused {
+		return fmt.Errorf("task %s is paused", id)
 	}
 
 	if s.logger != nil {
 		s.logger.Infof("Trigger task %s to run immediately", id)
 	}
 
-	go s.executeTask(runner)
+	s.executeTask(runner)
 	return nil
 }
 
@@ -596,11 +610,6 @@ func (s *scheduler) start() error {
 	}
 
 	return nil
-}
-
-// stop 停止调度器
-func (s *scheduler) stop() {
-	s.stopWithTimeout(5 * time.Second)
 }
 
 // stopWithTimeout 停止调度器，可等待正在执行的任务
@@ -659,9 +668,12 @@ func (s *scheduler) waitExecutions(timeout time.Duration) {
 		return
 	}
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case <-done:
-	case <-time.After(timeout):
+	case <-timer.C:
 		if s.logger != nil {
 			s.logger.Warnf("Stop waiting for running tasks timed out after %v", timeout)
 		}
@@ -750,9 +762,9 @@ func (s *scheduler) pauseAll() {
 
 // resumeAll 恢复所有任务
 func (s *scheduler) resumeAll() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	var expiredIDs []string
 
+	s.mu.Lock()
 	for id, runner := range s.tasks {
 		runner.mu.Lock()
 		runner.paused = false
@@ -760,6 +772,7 @@ func (s *scheduler) resumeAll() {
 		nextRun, expired := recomputeNextRun(runner.schedule, runner.task.Options.StartAt, runner.remainingRuns, time.Now())
 		if expired {
 			runner.nextRun = time.Time{}
+			expiredIDs = append(expiredIDs, id)
 		} else {
 			runner.nextRun = nextRun
 		}
@@ -768,6 +781,11 @@ func (s *scheduler) resumeAll() {
 		if s.monitor != nil {
 			s.monitor.setPauseUntil(id, time.Time{})
 		}
+	}
+	s.mu.Unlock()
+
+	for _, id := range expiredIDs {
+		s.expireTask(id)
 	}
 }
 
@@ -791,6 +809,15 @@ func (s *scheduler) nextRun(id string) (time.Time, error) {
 func (s *scheduler) runTask(runner *taskRunner) {
 	defer s.wg.Done()
 
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	defer timer.Stop()
+
 	for {
 		runner.mu.RLock()
 		next := runner.nextRun
@@ -800,15 +827,19 @@ func (s *scheduler) runTask(runner *taskRunner) {
 			return
 		}
 
-		wait := time.Until(next)
-		if wait < 0 {
-			wait = 0
-		}
+		wait := max(time.Until(next), 0)
 
+		timer.Reset(wait)
 		select {
 		case <-runner.ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return
-		case <-time.After(wait):
+		case <-timer.C:
 			runner.mu.RLock()
 			paused := runner.paused
 			pauseUntil := runner.pauseUntil
@@ -927,7 +958,7 @@ func (s *scheduler) runTaskWithRetry(runner *taskRunner, baseCtx context.Context
 			if lastErr != nil {
 				lastError = lastErr.Error()
 			}
-			s.monitor.recordExecutionResult(task.ID, duration, finalSuccess, actualRetries, lastError)
+			s.monitor.recordExecutionResult(task.ID, endTime, duration, finalSuccess, actualRetries, lastError)
 		}
 
 		if s.eventHook != nil {

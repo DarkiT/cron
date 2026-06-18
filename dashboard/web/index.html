@@ -109,15 +109,18 @@
                                             <span>-</span>
                                         </template>
                                     </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.misfirePolicy || '-' "></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        <template x-for="(v,k) in task.labels" :key="k">
+                                        <template x-for="(v,k) in (task.labels || {})" :key="k">
                                             <span class="inline-flex items-center px-2 py-1 mr-1 text-xs bg-gray-100 text-gray-700 rounded" x-text="k + '=' + v"></span>
+                                        </template>
+                                        <template x-if="!task.labels || Object.keys(task.labels).length === 0">
+                                            <span>-</span>
                                         </template>
                                     </td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatTime(task.nextRun)"></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.pauseUntil ? formatTime(task.pauseUntil) : '-' "></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.runCount"></td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="task.misfirePolicy || '-' "></td>
                                     <td class="px-6 py-4 whitespace-nowrap text-sm">
                                         <span class="text-green-600" x-text="task.successCount"></span> /
                                         <span class="text-red-600" x-text="task.failCount"></span> /

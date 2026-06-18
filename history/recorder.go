@@ -1,10 +1,14 @@
 package history
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 )
+
+// ErrNilStorage 表示创建历史记录器时未提供存储实现。
+var ErrNilStorage = errors.New("history storage cannot be nil")
 
 // HistoryRecorder 历史记录器实现
 type HistoryRecorder struct {
@@ -33,11 +37,11 @@ func WithRecorderLogger(logger Logger) RecorderOption {
 //
 // 示例：
 //
-//	recorder := NewHistoryRecorder(storage)  // 不带日志
-//	recorder := NewHistoryRecorder(storage, WithRecorderLogger(logger))  // 带日志
-func NewHistoryRecorder(storage Storage, opts ...RecorderOption) *HistoryRecorder {
+//	recorder, err := NewHistoryRecorder(storage)  // 不带日志
+//	recorder, err := NewHistoryRecorder(storage, WithRecorderLogger(logger))  // 带日志
+func NewHistoryRecorder(storage Storage, opts ...RecorderOption) (*HistoryRecorder, error) {
 	if storage == nil {
-		panic("history storage cannot be nil")
+		return nil, ErrNilStorage
 	}
 
 	recorder := &HistoryRecorder{
@@ -54,7 +58,29 @@ func NewHistoryRecorder(storage Storage, opts ...RecorderOption) *HistoryRecorde
 	recorder.wg.Add(1)
 	go recorder.writeLoop()
 
+	return recorder, nil
+}
+
+// MustNewHistoryRecorder 创建历史记录器，失败时 panic。
+// 仅建议在测试或必须快速失败的启动路径中使用。
+func MustNewHistoryRecorder(storage Storage, opts ...RecorderOption) *HistoryRecorder {
+	recorder, err := NewHistoryRecorder(storage, opts...)
+	if err != nil {
+		panic(err)
+	}
 	return recorder
+}
+
+func (hr *HistoryRecorder) safeWarn(msg string, keysAndValues ...any) {
+	if hr.logger == nil {
+		return
+	}
+
+	defer func() {
+		_ = recover()
+	}()
+
+	hr.logger.Warn(msg, keysAndValues...)
 }
 
 // Record 记录任务执行结果（异步）
@@ -95,21 +121,10 @@ func (hr *HistoryRecorder) Record(taskID string, startTime, endTime time.Time, s
 		defer hr.opsWg.Done()
 		// 队列已满，同步写入（避免丢失数据）
 		if err := hr.storage.Save(record); err != nil {
-			// 记录存储失败错误，但不阻塞调用方（nil-safe + panic-safe）
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// 防止 logger 实现 panic 导致程序崩溃
-						// 静默忽略，保持调度器稳定性
-					}
-				}()
-				if hr.logger != nil {
-					hr.logger.Warn("队列已满，同步保存历史记录失败",
-						"taskID", record.TaskID,
-						"recordID", record.ID,
-						"error", err.Error())
-				}
-			}()
+			hr.safeWarn("队列已满，同步保存历史记录失败",
+				"taskID", record.TaskID,
+				"recordID", record.ID,
+				"error", err.Error())
 		}
 	}
 }
@@ -158,21 +173,10 @@ func (hr *HistoryRecorder) writeLoop() {
 
 	for record := range hr.queue {
 		if err := hr.storage.Save(record); err != nil {
-			// 记录异步保存失败错误（nil-safe + panic-safe）
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						// 防止 logger 实现 panic 导致程序崩溃
-						// 静默忽略，保持调度器稳定性
-					}
-				}()
-				if hr.logger != nil {
-					hr.logger.Warn("异步保存历史记录失败",
-						"taskID", record.TaskID,
-						"recordID", record.ID,
-						"error", err.Error())
-				}
-			}()
+			hr.safeWarn("异步保存历史记录失败",
+				"taskID", record.TaskID,
+				"recordID", record.ID,
+				"error", err.Error())
 		}
 	}
 }

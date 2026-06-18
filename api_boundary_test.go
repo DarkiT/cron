@@ -128,6 +128,44 @@ func (r *stubRecorder) Close() error {
 	return nil
 }
 
+func TestRunNowRejectsPausedTask(t *testing.T) {
+	c := New()
+	if err := c.Schedule("paused-task", EverySecond, func(ctx context.Context) {}); err != nil {
+		t.Fatalf("schedule failed: %v", err)
+	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+	defer c.Stop()
+	if err := c.Pause("paused-task"); err != nil {
+		t.Fatalf("pause failed: %v", err)
+	}
+	if err := c.RunNow("paused-task"); err == nil {
+		t.Fatal("expected RunNow to reject paused task")
+	}
+}
+
+func TestResumeAllClearsPauseForActiveTasks(t *testing.T) {
+	c := New()
+	if err := c.Schedule("resume-all-active", EverySecond, func(ctx context.Context) {}, JobOptions{StartAt: time.Now().Add(2 * time.Second), MaxRuns: 1}); err != nil {
+		t.Fatalf("schedule failed: %v", err)
+	}
+	if err := c.Pause("resume-all-active"); err != nil {
+		t.Fatalf("pause failed: %v", err)
+	}
+	if task, ok := c.GetTask("resume-all-active"); !ok || !task.IsPaused {
+		t.Fatal("expected task to remain paused before ResumeAll")
+	}
+	c.ResumeAll()
+	task, ok := c.GetTask("resume-all-active")
+	if !ok {
+		t.Fatal("expected task to remain registered after ResumeAll")
+	}
+	if task.IsPaused {
+		t.Fatal("expected ResumeAll to clear paused state")
+	}
+}
+
 func TestUpdateRefreshesLabelsAndConcurrencyLimiter(t *testing.T) {
 	c := New()
 	executed := make(chan struct{}, 1)
@@ -152,6 +190,11 @@ func TestUpdateRefreshesLabelsAndConcurrencyLimiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update failed: %v", err)
 	}
+
+	if err := c.Start(); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+	defer c.Stop()
 
 	if err := c.RunNow("updatable"); err != nil {
 		t.Fatalf("run now failed: %v", err)
@@ -331,6 +374,9 @@ func TestTaskControlAPIsNormalizeID(t *testing.T) {
 
 	if _, err := c.NextRun("  trim-id  "); err != nil {
 		t.Fatalf("NextRun with trimmed id failed: %v", err)
+	}
+	if err := c.Start(); err != nil {
+		t.Fatalf("start failed: %v", err)
 	}
 	if err := c.RunNow("  trim-id  "); err != nil {
 		t.Fatalf("RunNow with trimmed id failed: %v", err)

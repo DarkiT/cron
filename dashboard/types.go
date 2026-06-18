@@ -24,6 +24,7 @@ type TaskInfo struct {
 	LastError     string            `json:"lastError"`     // 最后一次错误
 	Descriptions  map[string]string `json:"descriptions"`  // 任务描述信息
 	Labels        map[string]string `json:"labels"`        // 任务标签
+	AvgDuration   string            `json:"avgDuration"`   // 平均执行时长
 }
 
 // StatsInfo 统计信息
@@ -69,6 +70,6 @@ type ErrorResponse struct {
 
 // SuccessResponse 成功响应
 type SuccessResponse struct {
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }

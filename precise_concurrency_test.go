@@ -222,7 +222,9 @@ func TestConcurrencyControlWithRealScheduler(t *testing.T) {
 				t.Fatalf("添加任务失败: %v", err)
 			}
 
-			c.Start()
+			if err := c.Start(); err != nil {
+				t.Fatalf("启动调度器失败: %v", err)
+			}
 
 			// 运行足够长时间让多个任务重叠执行
 			time.Sleep(2 * time.Second)

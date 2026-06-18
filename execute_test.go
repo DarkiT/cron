@@ -81,7 +81,7 @@ func TestExecuteWithTimeout_Panic(t *testing.T) {
 
 	panicCalled := false
 	s.panicHandler = &testPanicHandler{
-		handleFunc: func(taskID string, r interface{}, stack []byte) {
+		handleFunc: func(taskID string, r any, stack []byte) {
 			panicCalled = true
 			if taskID != "test-task" {
 				t.Errorf("Expected taskID=test-task, got: %s", taskID)
@@ -117,7 +117,7 @@ func TestExecuteWithTimeout_GoroutineMonitoring(t *testing.T) {
 	// 我们启动多个 goroutine 以确保泄漏能被检测到
 	success, err := s.executeWithTimeout("test-task", context.Background(), func() error {
 		// 启动多个不会立即退出的 goroutine
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			go func() {
 				time.Sleep(5 * time.Second)
 			}()
@@ -174,7 +174,7 @@ func TestExecuteHandler_Panic(t *testing.T) {
 
 	panicCalled := false
 	s.panicHandler = &testPanicHandler{
-		handleFunc: func(taskID string, r interface{}, stack []byte) {
+		handleFunc: func(taskID string, r any, stack []byte) {
 			panicCalled = true
 		},
 	}
@@ -260,7 +260,7 @@ func TestExecuteJobInterface_Panic(t *testing.T) {
 
 	panicCalled := false
 	s.panicHandler = &testPanicHandler{
-		handleFunc: func(taskID string, r interface{}, stack []byte) {
+		handleFunc: func(taskID string, r any, stack []byte) {
 			panicCalled = true
 		},
 	}
@@ -326,7 +326,7 @@ func TestExecuteWithTimeout_RaceCondition(t *testing.T) {
 
 	// 并发执行多个任务
 	done := make(chan bool, numGoroutines)
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			success, err := s.executeWithTimeout("test-task", context.Background(), func() error {
 				atomic.AddInt64(&counter, 1)
@@ -341,7 +341,7 @@ func TestExecuteWithTimeout_RaceCondition(t *testing.T) {
 	}
 
 	// 等待所有任务完成
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		<-done
 	}
 
@@ -384,19 +384,19 @@ type testLogger struct {
 	t *testing.T
 }
 
-func (l *testLogger) Debugf(format string, args ...interface{}) {
+func (l *testLogger) Debugf(format string, args ...any) {
 	l.t.Logf("[DEBUG] "+format, args...)
 }
 
-func (l *testLogger) Infof(format string, args ...interface{}) {
+func (l *testLogger) Infof(format string, args ...any) {
 	l.t.Logf("[INFO] "+format, args...)
 }
 
-func (l *testLogger) Warnf(format string, args ...interface{}) {
+func (l *testLogger) Warnf(format string, args ...any) {
 	l.t.Logf("[WARN] "+format, args...)
 }
 
-func (l *testLogger) Errorf(format string, args ...interface{}) {
+func (l *testLogger) Errorf(format string, args ...any) {
 	l.t.Logf("[ERROR] "+format, args...)
 }
 
@@ -405,19 +405,19 @@ type logBuffer struct {
 	entries []string
 }
 
-func (l *logBuffer) Debugf(format string, args ...interface{}) {
+func (l *logBuffer) Debugf(format string, args ...any) {
 	l.entries = append(l.entries, fmt.Sprintf(format, args...))
 }
 
-func (l *logBuffer) Infof(format string, args ...interface{}) {
+func (l *logBuffer) Infof(format string, args ...any) {
 	l.entries = append(l.entries, fmt.Sprintf(format, args...))
 }
 
-func (l *logBuffer) Warnf(format string, args ...interface{}) {
+func (l *logBuffer) Warnf(format string, args ...any) {
 	l.entries = append(l.entries, fmt.Sprintf(format, args...))
 }
 
-func (l *logBuffer) Errorf(format string, args ...interface{}) {
+func (l *logBuffer) Errorf(format string, args ...any) {
 	l.entries = append(l.entries, fmt.Sprintf(format, args...))
 }
 
@@ -445,10 +445,10 @@ func containsHelper(s, substr string) bool {
 
 // testPanicHandler 测试用 panic 处理器
 type testPanicHandler struct {
-	handleFunc func(taskID string, r interface{}, stack []byte)
+	handleFunc func(taskID string, r any, stack []byte)
 }
 
-func (h *testPanicHandler) HandlePanic(taskID string, r interface{}, stack []byte) {
+func (h *testPanicHandler) HandlePanic(taskID string, r any, stack []byte) {
 	if h.handleFunc != nil {
 		h.handleFunc(taskID, r, stack)
 	}

@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,7 +27,9 @@ func TestScheduleJobByName(t *testing.T) {
 	}
 
 	// 启动调度器
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 	time.Sleep(2 * time.Second)
 
 	// 验证任务执行
@@ -37,13 +40,7 @@ func TestScheduleJobByName(t *testing.T) {
 
 	// 验证任务在列表中的名称
 	tasks := c.List()
-	found := false
-	for _, taskID := range tasks {
-		if taskID == "backup-job" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(tasks, "backup-job")
 	if !found {
 		t.Errorf("Task with name 'backup-job' not found in task list: %v", tasks)
 	}
@@ -71,7 +68,9 @@ func TestScheduleJobByNameWithOptions(t *testing.T) {
 		t.Fatalf("ScheduleJobByName with options failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 	time.Sleep(2 * time.Second)
 
 	executed := atomic.LoadInt64(&counter)
@@ -105,7 +104,9 @@ func TestCompareAPIs(t *testing.T) {
 		t.Fatalf("New API failed: %v", err2)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 	time.Sleep(2 * time.Second)
 
 	// 两个API都应该正常工作
@@ -172,13 +173,7 @@ func TestJobFactoryPattern(t *testing.T) {
 	}
 
 	for _, expected := range expectedTasks {
-		found := false
-		for _, actual := range tasks {
-			if actual == expected {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(tasks, expected)
 		if !found {
 			t.Errorf("Task %s not found in list: %v", expected, tasks)
 		}

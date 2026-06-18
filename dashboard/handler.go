@@ -38,10 +38,12 @@ func NewHandler(c *cron.Cron) *Handler {
 }
 
 // writeJSON 写入 JSON 响应
-func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func (h *Handler) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		http.Error(w, `{"error":"Internal Server Error","message":"failed to encode response","code":500}`, http.StatusInternalServerError)
+	}
 }
 
 // writeError 写入错误响应
@@ -150,30 +152,47 @@ func (h *Handler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if startTimeStr := r.URL.Query().Get("startTime"); startTimeStr != "" {
-		if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
-			filter.StartTime = &startTime
+		startTime, err := time.Parse(time.RFC3339, startTimeStr)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid startTime, must be RFC3339")
+			return
 		}
+		filter.StartTime = &startTime
 	}
 
 	if endTimeStr := r.URL.Query().Get("endTime"); endTimeStr != "" {
-		if endTime, err := time.Parse(time.RFC3339, endTimeStr); err == nil {
-			filter.EndTime = &endTime
+		endTime, err := time.Parse(time.RFC3339, endTimeStr)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "Invalid endTime, must be RFC3339")
+			return
 		}
+		filter.EndTime = &endTime
+	}
+
+	if filter.StartTime != nil && filter.EndTime != nil && filter.StartTime.After(*filter.EndTime) {
+		h.writeError(w, http.StatusBadRequest, "startTime must be before or equal to endTime")
+		return
 	}
 
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
-			filter.Limit = limit
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit <= 0 {
+			h.writeError(w, http.StatusBadRequest, "Invalid limit, must be a positive integer")
+			return
 		}
+		filter.Limit = limit
 	}
 	if filter.Limit == 0 {
 		filter.Limit = 50 // 默认每页50条
 	}
 
 	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
-			filter.Offset = offset
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil || offset < 0 {
+			h.writeError(w, http.StatusBadRequest, "Invalid offset, must be a non-negative integer")
+			return
 		}
+		filter.Offset = offset
 	}
 
 	// 查询历史记录

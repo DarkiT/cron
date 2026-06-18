@@ -16,7 +16,7 @@ import (
 // CustomPanicHandler 自定义panic处理器
 type CustomPanicHandler struct{}
 
-func (h *CustomPanicHandler) HandlePanic(taskID string, panicValue interface{}, stack []byte) {
+func (h *CustomPanicHandler) HandlePanic(taskID string, panicValue any, stack []byte) {
 	log.Printf("🚨 PANIC CAUGHT in task %s: %v", taskID, panicValue)
 	log.Printf("📍 Stack trace (first 500 chars): %.500s", string(stack))
 	fmt.Printf("✅ Task %s has been safely recovered and will continue running\n", taskID)
@@ -65,7 +65,7 @@ func main() {
 	}
 
 	// 2. 带恢复功能的任务（所有任务都内置panic保护）
-	scheduler.Schedule("safe-panic-task", "*/3 * * * * *", func(ctx context.Context) {
+	if err := scheduler.Schedule("safe-panic-task", "*/3 * * * * *", func(ctx context.Context) {
 		count := atomic.AddInt64(&counter2, 1)
 		fmt.Printf("[%s] SafePanicTask 执行中... (次数: %d)\n",
 			time.Now().Format("15:04:05"), count)
@@ -74,14 +74,18 @@ func main() {
 		if count == 2 {
 			panic(fmt.Sprintf("SafePanicTask 中的panic! 次数: %d", count))
 		}
-	})
+	}); err != nil {
+		log.Fatalf("调度 safe-panic-task 失败: %v", err)
+	}
 
 	// 3. 永不panic的任务作为对比
-	scheduler.Schedule("normal-task", "*/1 * * * * *", func(ctx context.Context) {
+	if err := scheduler.Schedule("normal-task", "*/1 * * * * *", func(ctx context.Context) {
 		count := atomic.AddInt64(&counter3, 1)
 		fmt.Printf("[%s] 正常任务执行 (次数: %d)\n",
 			time.Now().Format("15:04:05"), count)
-	})
+	}); err != nil {
+		log.Fatalf("调度 normal-task 失败: %v", err)
+	}
 
 	// 启动调度器
 	err = scheduler.Start()

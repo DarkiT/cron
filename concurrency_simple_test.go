@@ -44,7 +44,9 @@ func TestSimpleConcurrency(t *testing.T) {
 		t.Fatalf("添加任务失败: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("启动调度器失败: %v", err)
+	}
 	time.Sleep(400 * time.Millisecond)
 	c.Stop()
 
@@ -90,7 +92,9 @@ func TestSimpleConcurrency(t *testing.T) {
 		t.Fatalf("添加串行任务失败: %v", err)
 	}
 
-	c2.Start()
+	if err := c2.Start(); err != nil {
+		t.Fatalf("启动串行调度器失败: %v", err)
+	}
 	time.Sleep(400 * time.Millisecond)
 	c2.Stop()
 

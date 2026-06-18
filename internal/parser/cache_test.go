@@ -136,13 +136,13 @@ func TestCacheConcurrency(t *testing.T) {
 
 	// 并发解析
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
 
 			// 每个协程解析所有表达式多次
-			for j := 0; j < 10; j++ {
+			for range 10 {
 				for _, expr := range exprs {
 					_, err := p.Parse(expr)
 					if err != nil {
@@ -193,7 +193,7 @@ func TestCachePerformance(t *testing.T) {
 	// 测试有缓存的解析性能
 	start := time.Now()
 	iterations := 10000
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		_, err := p.Parse(expr)
 		if err != nil {
 			t.Fatalf("解析表达式失败: %v", err)

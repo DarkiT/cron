@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"slices"
 	"testing"
 )
 
@@ -34,13 +35,7 @@ func TestNameUnification(t *testing.T) {
 
 	// 验证任务使用Name()注册
 	tasks := c.List()
-	found := false
-	for _, task := range tasks {
-		if task == "test-job" {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(tasks, "test-job")
 	if !found {
 		t.Errorf("Task should be scheduled with Name() as ID, tasks: %v", tasks)
 	}
@@ -89,13 +84,7 @@ func TestAPIRecommendations(t *testing.T) {
 
 	expectedTasks := []string{"consistent-job", "custom-backup"}
 	for _, expected := range expectedTasks {
-		found := false
-		for _, actual := range tasks {
-			if actual == expected {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(tasks, expected)
 		if !found {
 			t.Errorf("Task %s not found in %v", expected, tasks)
 		}

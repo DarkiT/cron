@@ -2,6 +2,7 @@ package cron
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 )
@@ -78,9 +79,7 @@ func (r *JobRegistry) copy() map[string]RegisteredJob {
 	defer r.mu.RUnlock()
 
 	result := make(map[string]RegisteredJob, len(r.jobs))
-	for id, job := range r.jobs {
-		result[id] = job
-	}
+	maps.Copy(result, r.jobs)
 	return result
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -40,8 +41,19 @@ type Server struct {
 	handler        *Handler
 	server         *http.Server
 	addr           string
+	logger         *log.Logger
 	apiKey         string   // API Key 认证（空表示禁用）
 	allowedOrigins []string // 允许的 CORS 来源（空表示允许所有）
+}
+
+// WithLogger 设置 Dashboard 使用的标准库 logger。
+// 传入 nil 时保持默认 logger。
+func WithLogger(logger *log.Logger) ServerOption {
+	return func(s *Server) {
+		if logger != nil {
+			s.logger = logger
+		}
+	}
 }
 
 func writeJSONError(w http.ResponseWriter, status int, message string) {
@@ -64,6 +76,7 @@ func NewServer(c *cron.Cron, addr string, opts ...ServerOption) *Server {
 		cron:    c,
 		handler: NewHandler(c),
 		addr:    addr,
+		logger:  log.Default(),
 	}
 
 	// 应用选项
@@ -98,7 +111,11 @@ func (s *Server) buildHandler() (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get web root: %w", err)
 	}
-	rootMux.Handle("/", http.FileServer(http.FS(webRoot)))
+	webHandler := http.FileServer(http.FS(webRoot))
+	if s.apiKey != "" {
+		webHandler = s.authMiddleware(webHandler)
+	}
+	rootMux.Handle("/", webHandler)
 
 	return s.corsMiddleware(rootMux), nil
 }
@@ -110,6 +127,12 @@ func (s *Server) Start() error {
 		return err
 	}
 
+	ln, err := net.Listen("tcp", s.addr)
+	if err != nil {
+		return err
+	}
+	s.addr = ln.Addr().String()
+
 	s.server = &http.Server{
 		Addr:         s.addr,
 		Handler:      handler,
@@ -118,32 +141,36 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	log.Printf("Dashboard server starting on %s", s.addr)
-	log.Println("API endpoints:")
-	log.Println("  GET    /api/tasks           - 获取所有任务")
-	log.Println("  GET    /api/tasks/{id}      - 获取任务详情")
-	log.Println("  DELETE /api/tasks/{id}      - 移除任务")
-	log.Println("  POST   /api/tasks/{id}/run  - 立即触发任务")
-	log.Println("  POST   /api/tasks/{id}/pause - 暂停任务")
-	log.Println("  POST   /api/tasks/{id}/resume - 恢复任务（canonical）")
-	log.Println("  POST   /api/tasks/{id}/unfuse - 兼容旧版解除熔断别名")
-	log.Println("  PATCH  /api/tasks/{id}/schedule - 更新调度表达式")
-	log.Println("  GET    /api/stats           - 获取统计信息")
-	log.Println("  GET    /api/history         - 获取历史记录")
-	log.Println("")
-	log.Println("Query parameters for /api/history:")
-	log.Println("  taskId      - 按任务ID筛选")
-	log.Println("  successOnly - 仅成功记录 (true/false)")
-	log.Println("  failedOnly  - 仅失败记录 (true/false)")
-	log.Println("  startTime   - 开始时间 (RFC3339格式)")
-	log.Println("  endTime     - 结束时间 (RFC3339格式)")
-	log.Println("  limit       - 每页记录数 (默认50)")
-	log.Println("  offset      - 偏移量 (默认0)")
+	if s.logger != nil {
+		s.logger.Printf("Dashboard server starting on %s", s.addr)
+		s.logger.Println("API endpoints:")
+		s.logger.Println("  GET    /api/tasks           - 获取所有任务")
+		s.logger.Println("  GET    /api/tasks/{id}      - 获取任务详情")
+		s.logger.Println("  DELETE /api/tasks/{id}      - 移除任务")
+		s.logger.Println("  POST   /api/tasks/{id}/run  - 立即触发任务")
+		s.logger.Println("  POST   /api/tasks/{id}/pause - 暂停任务")
+		s.logger.Println("  POST   /api/tasks/{id}/resume - 恢复任务（canonical）")
+		s.logger.Println("  POST   /api/tasks/{id}/unfuse - 兼容旧版解除熔断别名")
+		s.logger.Println("  PATCH  /api/tasks/{id}/schedule - 更新调度表达式")
+		s.logger.Println("  GET    /api/stats           - 获取统计信息")
+		s.logger.Println("  GET    /api/history         - 获取历史记录")
+		s.logger.Println("")
+		s.logger.Println("Query parameters for /api/history:")
+		s.logger.Println("  taskId      - 按任务ID筛选")
+		s.logger.Println("  successOnly - 仅成功记录 (true/false)")
+		s.logger.Println("  failedOnly  - 仅失败记录 (true/false)")
+		s.logger.Println("  startTime   - 开始时间 (RFC3339格式)")
+		s.logger.Println("  endTime     - 结束时间 (RFC3339格式)")
+		s.logger.Println("  limit       - 每页记录数 (默认50)")
+		s.logger.Println("  offset      - 偏移量 (默认0)")
+	}
 
 	// 在新 goroutine 中启动服务器
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Dashboard server error: %v", err)
+		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			if s.logger != nil {
+				s.logger.Printf("Dashboard server error: %v", err)
+			}
 		}
 	}()
 
@@ -159,7 +186,9 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	log.Println("Stopping dashboard server...")
+	if s.logger != nil {
+		s.logger.Println("Stopping dashboard server...")
+	}
 	return s.server.Shutdown(ctx)
 }
 
@@ -172,8 +201,12 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		// 确定允许的来源
-		allowedOrigin := "*"
-		if len(s.allowedOrigins) > 0 {
+		allowedOrigin := ""
+		if len(s.allowedOrigins) == 0 {
+			if origin != "" {
+				allowedOrigin = origin
+			}
+		} else {
 			if origin == "" {
 				next.ServeHTTP(w, r)
 				return
@@ -192,7 +225,9 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		if allowedOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 

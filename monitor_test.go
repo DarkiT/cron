@@ -29,7 +29,7 @@ func TestMonitor_RecordExecution_DurationStats(t *testing.T) {
 	}
 
 	for _, exec := range executions {
-		m.recordExecution(taskID, exec.duration, exec.success, exec.retry)
+		m.recordExecution(taskID, time.Now(), exec.duration, exec.success, exec.retry)
 	}
 
 	// 获取统计信息
@@ -77,7 +77,7 @@ func TestMonitor_RecordExecution_FirstExecution(t *testing.T) {
 
 	// 首次执行
 	duration := 123 * time.Millisecond
-	m.recordExecution(taskID, duration, true, 0)
+	m.recordExecution(taskID, time.Now(), duration, true, 0)
 
 	stats, exists := m.GetStats(taskID)
 	if !exists {
@@ -133,7 +133,7 @@ func TestMonitor_RecordGoroutines_Concurrent(t *testing.T) {
 	concurrency := 100
 	wg.Add(concurrency)
 
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		go func(n int64) {
 			defer wg.Done()
 			// 每个协程记录一个不同的值
@@ -169,7 +169,7 @@ func TestMonitor_RecordExecution_NonExistentTask(t *testing.T) {
 	m := newMonitor()
 
 	// 记录不存在的任务执行，应该不会 panic
-	m.recordExecution("non-existent-task", 100*time.Millisecond, true, 0)
+	m.recordExecution("non-existent-task", time.Now(), 100*time.Millisecond, true, 0)
 
 	// 如果执行到这里没有 panic，测试通过
 }
@@ -180,8 +180,8 @@ func TestMonitor_Stats_JSONSerialization(t *testing.T) {
 	taskID := "test-task-json"
 
 	m.addTask(taskID, "*/5 * * * *", time.Now(), map[string]string{"env": "prod"}, "skip")
-	m.recordExecution(taskID, 100*time.Millisecond, true, 0)
-	m.recordExecution(taskID, 200*time.Millisecond, true, 0)
+	m.recordExecution(taskID, time.Now(), 100*time.Millisecond, true, 0)
+	m.recordExecution(taskID, time.Now(), 200*time.Millisecond, true, 0)
 	m.recordGoroutines(taskID, 50)
 
 	stats, exists := m.GetStats(taskID)
@@ -228,11 +228,11 @@ func TestMonitor_ConcurrentRecordExecution(t *testing.T) {
 	concurrency := 100
 	wg.Add(concurrency)
 
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		go func(n int) {
 			defer wg.Done()
 			duration := time.Duration(n) * time.Millisecond
-			m.recordExecution(taskID, duration, n%2 == 0, n%10)
+			m.recordExecution(taskID, time.Now(), duration, n%2 == 0, n%10)
 		}(i)
 	}
 
@@ -271,9 +271,9 @@ func TestMonitor_GetAllStats(t *testing.T) {
 	m.addTask("task-3", "*/15 * * * *", time.Now(), nil, "skip")
 
 	// 记录执行
-	m.recordExecution("task-1", 100*time.Millisecond, true, 0)
-	m.recordExecution("task-2", 200*time.Millisecond, true, 0)
-	m.recordExecution("task-3", 300*time.Millisecond, false, 0)
+	m.recordExecution("task-1", time.Now(), 100*time.Millisecond, true, 0)
+	m.recordExecution("task-2", time.Now(), 200*time.Millisecond, true, 0)
+	m.recordExecution("task-3", time.Now(), 300*time.Millisecond, false, 0)
 
 	// 记录协程
 	m.recordGoroutines("task-1", 10)
@@ -328,7 +328,7 @@ func TestMonitor_RemoveTask(t *testing.T) {
 	taskID := "test-task-remove"
 
 	m.addTask(taskID, "*/5 * * * *", time.Now(), nil, "skip")
-	m.recordExecution(taskID, 100*time.Millisecond, true, 0)
+	m.recordExecution(taskID, time.Now(), 100*time.Millisecond, true, 0)
 
 	// 验证任务存在
 	if _, exists := m.GetStats(taskID); !exists {
@@ -380,7 +380,7 @@ func TestMonitor_RecordSkip(t *testing.T) {
 	m.addTask(taskID, "*/5 * * * *", time.Now(), nil, "skip")
 
 	// 记录多次跳过
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		m.recordSkip(taskID)
 	}
 
@@ -432,5 +432,20 @@ func TestMonitor_UpdateSchedule(t *testing.T) {
 
 	if stats.Schedule != newSchedule {
 		t.Errorf("Schedule = %s; want %s", stats.Schedule, newSchedule)
+	}
+}
+
+func TestMonitorRecordExecutionUsesProvidedFinishedAt(t *testing.T) {
+	m := newMonitor()
+	taskID := "test-task-last-run"
+	finishedAt := time.Now().Add(-2 * time.Minute).Round(0)
+	m.addTask(taskID, "*/5 * * * *", time.Now(), nil, "skip")
+	m.recordExecutionResult(taskID, finishedAt, 100*time.Millisecond, true, 0, "")
+	stats, exists := m.GetStats(taskID)
+	if !exists {
+		t.Fatal("任务统计信息不存在")
+	}
+	if !stats.LastRun.Equal(finishedAt) {
+		t.Fatalf("LastRun = %v; want %v", stats.LastRun, finishedAt)
 	}
 }

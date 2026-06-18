@@ -8,7 +8,7 @@ import (
 
 // PanicHandler 定义panic处理器接口
 type PanicHandler interface {
-	HandlePanic(taskID string, panicValue interface{}, stack []byte)
+	HandlePanic(taskID string, panicValue any, stack []byte)
 }
 
 // DefaultPanicHandler 默认的panic处理器
@@ -25,7 +25,7 @@ func NewDefaultPanicHandler(logger Logger) *DefaultPanicHandler {
 }
 
 // HandlePanic 默认的panic处理实现
-func (h *DefaultPanicHandler) HandlePanic(taskID string, panicValue interface{}, stack []byte) {
+func (h *DefaultPanicHandler) HandlePanic(taskID string, panicValue any, stack []byte) {
 	if h.logger != nil {
 		h.logger.Errorf("PANIC in task %s: %v\nStack trace:\n%s", taskID, panicValue, stack)
 	}

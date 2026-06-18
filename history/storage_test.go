@@ -14,10 +14,10 @@ type mockLogger struct {
 
 type logEntry struct {
 	msg           string
-	keysAndValues []interface{}
+	keysAndValues []any
 }
 
-func (m *mockLogger) Warn(msg string, keysAndValues ...interface{}) {
+func (m *mockLogger) Warn(msg string, keysAndValues ...any) {
 	m.warnings = append(m.warnings, logEntry{
 		msg:           msg,
 		keysAndValues: keysAndValues,
@@ -43,7 +43,11 @@ func TestNewFileStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	if storage == nil {
 		t.Error("存储实例不应为 nil")
@@ -61,7 +65,11 @@ func TestFileStorageSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	now := time.Now()
 	record := &ExecutionRecord{
@@ -93,7 +101,11 @@ func TestFileStorageRejectsInvalidTaskID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	now := time.Now()
 	for _, taskID := range []string{"../escape", "task/sub", `task\\sub`, ".", ".."} {
@@ -117,7 +129,11 @@ func TestFileStorageSaveNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	err = storage.Save(nil)
 	if err == nil {
@@ -131,7 +147,11 @@ func TestFileStorageQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存多条记录
 	now := time.Now()
@@ -215,7 +235,11 @@ func TestFileStorageQueryWithTimeRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存不同时间的记录
 	now := time.Now()
@@ -268,11 +292,15 @@ func TestFileStorageQueryWithPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存多条记录
 	now := time.Now()
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		record := &ExecutionRecord{
 			ID:        "task_" + string(rune(i)),
 			TaskID:    "task",
@@ -323,11 +351,15 @@ func TestFileStorageCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存记录
 	now := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		record := &ExecutionRecord{
 			ID:        "task_" + string(rune(i)),
 			TaskID:    "task",
@@ -369,7 +401,11 @@ func TestFileStorageDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存旧记录和新记录
 	now := time.Now()
@@ -440,11 +476,15 @@ func TestFileStorageSharding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存跨越多天的记录
 	baseTime := time.Now().Add(-3 * 24 * time.Hour)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		recordTime := baseTime.Add(time.Duration(i) * 24 * time.Hour)
 		record := &ExecutionRecord{
 			ID:        "task_day_" + recordTime.Format("20060102"),
@@ -488,7 +528,11 @@ func TestFileStorageWithLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	if storage.logger == nil {
 		t.Error("logger 应该被设置")
@@ -507,7 +551,11 @@ func TestFileStorageWithoutLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	if storage.logger != nil {
 		t.Error("logger 应该为 nil")
@@ -544,7 +592,11 @@ func TestFileStorageLoggerOnCorruptedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 创建一个带有损坏 JSON 的文件
 	taskDir := filepath.Join(tmpDir, "task1")
@@ -586,7 +638,11 @@ func TestFileStorageLoggerOnMissingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 查询不存在的任务不应产生警告
 	records, err := storage.Query(RecordFilter{TaskID: "nonexistent"})
@@ -611,7 +667,11 @@ func TestFileStorageLoggerOnDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 保存一条正常记录
 	oldTime := time.Now().Add(-48 * time.Hour)
@@ -663,7 +723,11 @@ func TestFileStorageNilSafeLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	// 创建一个带有损坏 JSON 的文件
 	taskDir := filepath.Join(tmpDir, "task1")
@@ -698,7 +762,11 @@ func TestFileStorageMultipleOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			t.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	if storage.logger != logger {
 		t.Error("logger 应该被正确设置")
@@ -713,7 +781,11 @@ func BenchmarkFileStorageWithLogger(b *testing.B) {
 	if err != nil {
 		b.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			b.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	record := &ExecutionRecord{
 		ID:        "bench_task",
@@ -737,7 +809,11 @@ func BenchmarkFileStorageWithoutLogger(b *testing.B) {
 	if err != nil {
 		b.Fatalf("创建存储失败: %v", err)
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			b.Fatalf("关闭存储失败: %v", err)
+		}
+	}()
 
 	record := &ExecutionRecord{
 		ID:        "bench_task",

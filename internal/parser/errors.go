@@ -6,8 +6,4 @@ import "fmt"
 var (
 	// 公开错误
 	ErrUnsupportedSpec = fmt.Errorf("无效的cron表达式格式")
-
-	// 内部错误
-	errInvalidSpecFormat     = fmt.Errorf("无效的cron表达式格式")
-	errInvalidSpecDescriptor = fmt.Errorf("解析器不接受@描述符")
 )

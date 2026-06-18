@@ -46,18 +46,24 @@ func main() {
 	c := cron.New(cron.WithLogger(customLogger))
 
 	// 添加正常任务
-	c.Schedule("normal-task", "*/2 * * * * *", func(ctx context.Context) {
+	if err := c.Schedule("normal-task", "*/2 * * * * *", func(ctx context.Context) {
 		fmt.Println("✅ 正常任务执行")
-	})
+	}); err != nil {
+		log.Fatalf("schedule normal-task failed: %v", err)
+	}
 
 	// 添加会panic的任务（测试错误日志，所有任务都内置panic保护）
-	c.Schedule("panic-task", "*/4 * * * * *", func(ctx context.Context) {
+	if err := c.Schedule("panic-task", "*/4 * * * * *", func(ctx context.Context) {
 		fmt.Println("💥 即将panic...")
 		panic("测试panic处理")
-	})
+	}); err != nil {
+		log.Fatalf("schedule panic-task failed: %v", err)
+	}
 
 	// 启动调度器
-	c.Start()
+	if err := c.Start(); err != nil {
+		log.Fatalf("start scheduler failed: %v", err)
+	}
 	defer c.Stop()
 
 	fmt.Println("🚀 调度器已启动，观察自定义日志输出...")

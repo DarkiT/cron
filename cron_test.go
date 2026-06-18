@@ -3,6 +3,7 @@ package cron
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -181,13 +182,7 @@ func TestCron_List(t *testing.T) {
 
 	// 检查是否包含所有任务
 	for _, expected := range tasks {
-		found := false
-		for _, actual := range list {
-			if actual == expected {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(list, expected)
 		if !found {
 			t.Errorf("Task %s not found in list", expected)
 		}
@@ -269,7 +264,9 @@ func TestRegisteredJobs(t *testing.T) {
 	}
 
 	// 注册任务
-	RegisterJob(testJob)
+	if err := RegisterJob(testJob); err != nil {
+		t.Fatalf("Failed to register job: %v", err)
+	}
 
 	// 检查任务是否被注册
 	registered := ListRegistered()
@@ -326,7 +323,7 @@ func TestConcurrency(t *testing.T) {
 	counter := int64(0)
 
 	// 并发添加任务
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()

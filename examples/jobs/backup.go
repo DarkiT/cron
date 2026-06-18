@@ -23,8 +23,7 @@ func init() {
 		name:    "自动备份",
 		counter: &backupCounter,
 	}
-	// 使用RegisterJob，永远不会panic
-	cron.RegisterJob(job)
+	cron.SafeRegisterJob(job)
 }
 
 func (j *BackupJob) Name() string {

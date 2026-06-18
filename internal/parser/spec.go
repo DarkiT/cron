@@ -1,5 +1,7 @@
 package parser
 
+import "slices"
+
 import "time"
 
 // SpecSchedule specifies a duty cycle (to the second granularity), based on a
@@ -169,18 +171,13 @@ func dayMatches(s *SpecSchedule, t time.Time) bool {
 	// 如果使用了 L/W/# 语法，需要动态计算实际日期
 	if s.hasSpecialDaySyntax() {
 		actualDays := s.calculateActualDaysOfMonth(t.Year(), int(t.Month()))
-		for _, day := range actualDays {
-			if day == t.Day() {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(actualDays, t.Day())
 	}
 
 	// 标准的位图匹配逻辑（保持向后兼容）
 	var (
-		domMatch bool = 1<<uint(t.Day())&s.Dom > 0
-		dowMatch bool = 1<<uint(t.Weekday())&s.Dow > 0
+		domMatch = 1<<uint(t.Day())&s.Dom > 0
+		dowMatch = 1<<uint(t.Weekday())&s.Dow > 0
 	)
 	if s.Dom&starBit > 0 || s.Dow&starBit > 0 {
 		return domMatch && dowMatch

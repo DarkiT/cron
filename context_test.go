@@ -52,7 +52,8 @@ func TestWithContextBasic(t *testing.T) {
 
 // TestWithContextNil 测试传入 nil 上下文的情况
 func TestWithContextNil(t *testing.T) {
-	c := New(WithContext(nil)) // 传入 nil
+	var nilCtx context.Context
+	c := New(WithContext(nilCtx))
 
 	counter := int64(0)
 	err := c.Schedule("nil-context-test", "*/10 * * * * *", func(ctx context.Context) {
@@ -202,4 +203,39 @@ func TestStopCancelsRunnerContext(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Error("Task context was not cancelled after scheduler Stop")
 	}
+}
+
+func TestContextWatcherExitsOnStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	c := New(WithContext(ctx))
+	if err := c.Start(); err != nil {
+		t.Fatalf("start failed: %v", err)
+	}
+
+	watcher1 := c.watcherStop
+	if watcher1 == nil {
+		t.Fatal("expected watcher stop channel to be initialized")
+	}
+
+	c.Stop()
+
+	select {
+	case <-watcher1:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected watcher stop channel to close on Stop")
+	}
+
+	if err := c.Start(); err != nil {
+		t.Fatalf("restart failed: %v", err)
+	}
+	watcher2 := c.watcherStop
+	if watcher2 == nil {
+		t.Fatal("expected watcher stop channel after restart")
+	}
+	if watcher2 == watcher1 {
+		t.Fatal("expected restart to create a fresh watcher channel")
+	}
+	c.Stop()
 }

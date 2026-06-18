@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-var secondParser = NewParser(Second | Minute | Hour | Dom | Month | DowOptional | Descriptor)
+var secondParser = MustNewParser(Second | Minute | Hour | Dom | Month | DowOptional | Descriptor)
 
 func TestRange(t *testing.T) {
 	zero := uint64(0)
@@ -183,7 +183,7 @@ func TestParseSchedule(t *testing.T) {
 }
 
 func TestOptionalSecondSchedule(t *testing.T) {
-	parser := NewParser(SecondOptional | Minute | Hour | Dom | Month | Dow | Descriptor)
+	parser := MustNewParser(SecondOptional | Minute | Hour | Dom | Month | Dow | Descriptor)
 	entries := []struct {
 		expr     string
 		expected Schedule
@@ -365,10 +365,17 @@ func TestStandardSpecSchedule(t *testing.T) {
 }
 
 func TestNoDescriptorParser(t *testing.T) {
-	parser := NewParser(Minute | Hour)
+	parser := MustNewParser(Minute | Hour)
 	_, err := parser.Parse("@every 1m")
 	if err == nil {
 		t.Error("expected an error, got none")
+	}
+}
+
+func TestNewParserRejectsMultipleOptionalFields(t *testing.T) {
+	_, err := NewParser(SecondOptional | DowOptional | Minute | Hour | Dom | Month)
+	if err == nil {
+		t.Fatal("expected invalid parser options error")
 	}
 }
 
@@ -399,46 +406,6 @@ func every5min5s(loc *time.Location, explicit bool) *SpecSchedule {
 		Hour:                   all(hours),
 		Dom:                    all(dom),
 		Month:                  all(months),
-		Dow:                    all(dow),
-		Location:               loc,
-		locationSet:            explicit,
-		lastDayOfMonth:         false,
-		lastWorkdayOfMonth:     false,
-		workdaysOfMonth:        map[int]bool{},
-		lastWeekDaysOfWeek:     map[int]bool{},
-		specificWeekDaysOfWeek: map[int]bool{},
-		daysOfMonthRestricted:  false,
-		daysOfWeekRestricted:   false,
-	}
-}
-
-func midnight(loc *time.Location, explicit bool) *SpecSchedule {
-	return &SpecSchedule{
-		Second:                 1,
-		Minute:                 1,
-		Hour:                   1,
-		Dom:                    all(dom),
-		Month:                  all(months),
-		Dow:                    all(dow),
-		Location:               loc,
-		locationSet:            explicit,
-		lastDayOfMonth:         false,
-		lastWorkdayOfMonth:     false,
-		workdaysOfMonth:        map[int]bool{},
-		lastWeekDaysOfWeek:     map[int]bool{},
-		specificWeekDaysOfWeek: map[int]bool{},
-		daysOfMonthRestricted:  false,
-		daysOfWeekRestricted:   false,
-	}
-}
-
-func annual(loc *time.Location, explicit bool) *SpecSchedule {
-	return &SpecSchedule{
-		Second:                 1 << seconds.min,
-		Minute:                 1 << minutes.min,
-		Hour:                   1 << hours.min,
-		Dom:                    1 << dom.min,
-		Month:                  1 << months.min,
 		Dow:                    all(dow),
 		Location:               loc,
 		locationSet:            explicit,

@@ -22,11 +22,23 @@ func main() {
 		fmt.Printf("创建历史记录存储失败: %v\n", err)
 		return
 	}
-	defer storage.Close()
+	defer func() {
+		if err := storage.Close(); err != nil {
+			fmt.Printf("关闭历史记录存储失败: %v\n", err)
+		}
+	}()
 
 	// 2. 创建历史记录器
-	recorder := history.NewHistoryRecorder(storage)
-	defer recorder.Close()
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		fmt.Printf("创建历史记录器失败: %v\n", err)
+		return
+	}
+	defer func() {
+		if err := recorder.Close(); err != nil {
+			fmt.Printf("关闭历史记录器失败: %v\n", err)
+		}
+	}()
 
 	// 3. 创建启用历史记录的调度器
 	c := cron.New(cron.WithHistoryRecorder(recorder))
@@ -35,13 +47,16 @@ func main() {
 	fmt.Println("▸ 添加任务...")
 
 	// 任务 1：每 3 秒执行的成功任务
-	c.Schedule("success-task", "@every 3s", func(ctx context.Context) {
+	if err := c.Schedule("success-task", "@every 3s", func(ctx context.Context) {
 		fmt.Println("  ✓ 成功任务执行")
-	})
+	}); err != nil {
+		fmt.Printf("添加 success-task 失败: %v\n", err)
+		return
+	}
 
 	// 任务 2：每 5 秒执行的可能失败任务（带重试）
 	attemptCount := 0
-	c.Schedule("retry-task", "@every 5s", func(ctx context.Context) {
+	if err := c.Schedule("retry-task", "@every 5s", func(ctx context.Context) {
 		attemptCount++
 		if attemptCount%3 == 1 {
 			fmt.Println("  ✗ 重试任务失败（将重试）")
@@ -52,18 +67,27 @@ func main() {
 	}, cron.JobOptions{
 		MaxRetries:    2,
 		RetryInterval: 1 * time.Second,
-	})
+	}); err != nil {
+		fmt.Printf("添加 retry-task 失败: %v\n", err)
+		return
+	}
 
 	// 任务 3：每 4 秒执行的必定失败任务
-	c.Schedule("fail-task", "@every 4s", func(ctx context.Context) {
+	if err := c.Schedule("fail-task", "@every 4s", func(ctx context.Context) {
 		fmt.Println("  ✗ 失败任务执行失败")
 		panic("必定失败")
 	}, cron.JobOptions{
 		MaxRetries: 0, // 不重试
-	})
+	}); err != nil {
+		fmt.Printf("添加 fail-task 失败: %v\n", err)
+		return
+	}
 
 	// 5. 启动调度器
-	c.Start()
+	if err := c.Start(); err != nil {
+		fmt.Printf("启动调度器失败: %v\n", err)
+		return
+	}
 	fmt.Println("▸ 调度器已启动")
 
 	// 6. 运行一段时间收集历史记录

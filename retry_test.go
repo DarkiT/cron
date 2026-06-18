@@ -32,7 +32,9 @@ func TestRetryBasic(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（完成首次执行和所有重试）
 	time.Sleep(600 * time.Millisecond)
@@ -79,7 +81,9 @@ func TestRetryInfinite(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（完成多次重试）
 	time.Sleep(600 * time.Millisecond)
@@ -124,7 +128,9 @@ func TestRetryExhausted(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（完成所有重试）
 	time.Sleep(600 * time.Millisecond)
@@ -179,7 +185,9 @@ func TestRetryContextCancel(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待一次执行和部分重试
 	time.Sleep(600 * time.Millisecond)
@@ -222,7 +230,9 @@ func TestRetryImmediately(t *testing.T) {
 	}
 
 	startTime := time.Now()
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（立即重试应该很快完成）
 	time.Sleep(500 * time.Millisecond)
@@ -272,7 +282,9 @@ func TestRetryWithConcurrency(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（完成重试过程）
 	time.Sleep(800 * time.Millisecond)
@@ -326,7 +338,9 @@ func TestRetryStats(t *testing.T) {
 		t.Fatalf("Schedule task2 failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（完成所有重试）
 	time.Sleep(800 * time.Millisecond)
@@ -392,7 +406,9 @@ func TestRetryWithTimeout(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 
 	// 等待任务执行（任务超时后继续重试）
 	time.Sleep(800 * time.Millisecond)
@@ -438,7 +454,9 @@ func TestRetryNoRetry(t *testing.T) {
 		t.Fatalf("Schedule failed: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
 	defer c.Stop()
 
 	// 等待任务执行（只需等待首次执行完成）

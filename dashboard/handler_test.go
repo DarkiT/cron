@@ -25,7 +25,10 @@ func setupTestCron(t *testing.T) *cron.Cron {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
 
-	recorder := history.NewHistoryRecorder(storage)
+	recorder, err := history.NewHistoryRecorder(storage)
+	if err != nil {
+		t.Fatalf("Failed to create recorder: %v", err)
+	}
 	t.Cleanup(func() {
 		recorder.Close()
 		storage.Close()
@@ -95,6 +98,7 @@ func TestGetTask(t *testing.T) {
 
 	// 设置路由
 	req := httptest.NewRequest("GET", "/api/tasks/test-task-1", nil)
+	req.SetPathValue("id", "test-task-1")
 	w := httptest.NewRecorder()
 	handler.GetTask(w, req)
 
@@ -122,6 +126,7 @@ func TestGetTaskNotFound(t *testing.T) {
 	handler := NewHandler(c)
 
 	req := httptest.NewRequest("GET", "/api/tasks/non-existent", nil)
+	req.SetPathValue("id", "non-existent")
 	w := httptest.NewRecorder()
 	handler.GetTask(w, req)
 
@@ -369,5 +374,24 @@ func TestRemoveNonExistentTask(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("Expected status %d, got %d", http.StatusNotFound, w.Code)
+	}
+}
+
+func TestGetHistoryRejectsInvalidParams(t *testing.T) {
+	c := setupTestCron(t)
+	handler := NewHandler(c)
+	for _, raw := range []string{
+		"/api/history?startTime=bad",
+		"/api/history?endTime=bad",
+		"/api/history?limit=0",
+		"/api/history?offset=-1",
+		"/api/history?startTime=2026-01-02T15:04:05Z&endTime=2025-01-02T15:04:05Z",
+	} {
+		req := httptest.NewRequest(http.MethodGet, raw, nil)
+		w := httptest.NewRecorder()
+		handler.GetHistory(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("%s: expected 400, got %d", raw, w.Code)
+		}
 	}
 }

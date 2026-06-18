@@ -142,6 +142,7 @@ type Cron struct {
 	rootContext  context.Context  // 根上下文，用于生命周期管理
 	recorder     history.Recorder // 历史记录器（可选）
 	eventHook    EventHook
+	watcherStop  chan struct{}
 }
 
 // New 创建一个新的定时任务调度器
@@ -164,6 +165,7 @@ func New(opts ...Option) *Cron {
 
 	// 使用配置的 rootContext 创建调度器
 	c.scheduler = newSchedulerWithContext(c.rootContext)
+	c.watcherStop = make(chan struct{})
 
 	// 默认启用监控
 	c.enableMonitoring()
@@ -578,13 +580,14 @@ func (c *Cron) Start() error {
 	}
 
 	// 启动上下文监听器
-	go c.contextWatcher()
+	c.watcherStop = make(chan struct{})
+	go c.contextWatcher(c.watcherStop)
 
 	return nil
 }
 
 // contextWatcher 监听根上下文的取消信号
-func (c *Cron) contextWatcher() {
+func (c *Cron) contextWatcher(stopCh <-chan struct{}) {
 	if c.rootContext == nil {
 		return
 	}
@@ -596,13 +599,16 @@ func (c *Cron) contextWatcher() {
 		return
 	}
 
-	<-done
-
-	// 上下文被取消，自动停止调度器
-	if c.logger != nil {
-		c.logger.Infof("Root context cancelled, stopping cron scheduler")
+	select {
+	case <-done:
+		// 上下文被取消，自动停止调度器
+		if c.logger != nil {
+			c.logger.Infof("Root context cancelled, stopping cron scheduler")
+		}
+		c.Stop()
+	case <-stopCh:
+		return
 	}
-	c.Stop()
 }
 
 // Stop 停止调度器
@@ -625,11 +631,17 @@ func (c *Cron) stopInternal(timeout time.Duration, logMsg string) {
 	}
 
 	c.running = false
+	stopCh := c.watcherStop
+	c.watcherStop = nil
 	if c.logger != nil {
 		c.logger.Infof(logMsg)
 	}
 	sched := c.scheduler
 	c.mu.Unlock()
+
+	if stopCh != nil {
+		close(stopCh)
+	}
 
 	sched.stopWithTimeout(timeout)
 }

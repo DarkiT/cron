@@ -59,9 +59,6 @@ type Parser struct {
 
 // NewParser creates a Parser with custom options.
 //
-// It panics if more than one Optional is given, since it would be impossible to
-// correctly infer which optional is provided or missing in general.
-//
 // Examples
 //
 //	// Standard parser without descriptors
@@ -73,9 +70,9 @@ type Parser struct {
 //	sched, err := specParser.Parse("15 */3 *")
 //
 //	// Same as above, just makes Dow optional
-//	subsParser := NewParser(Dom | Month | DowOptional)
+//	subsParser, err := NewParser(Dom | Month | DowOptional)
 //	sched, err := specParser.Parse("15 */3")
-func NewParser(options ParseOption) Parser {
+func NewParser(options ParseOption) (Parser, error) {
 	optionals := 0
 	if options&DowOptional > 0 {
 		optionals++
@@ -84,9 +81,19 @@ func NewParser(options ParseOption) Parser {
 		optionals++
 	}
 	if optionals > 1 {
-		panic("multiple optionals may not be configured")
+		return Parser{}, fmt.Errorf("multiple optionals may not be configured")
 	}
-	return Parser{options}
+	return Parser{options: options}, nil
+}
+
+// MustNewParser creates a Parser and panics on invalid options.
+// Suitable for package-level defaults and tests that require fail-fast semantics.
+func MustNewParser(options ParseOption) Parser {
+	p, err := NewParser(options)
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
 
 // Parse returns a new crontab schedule representing the given spec.
@@ -164,7 +171,7 @@ func normalizeFields(fields []string, options ParseOption) ([]string, error) {
 	return expandedFields, nil
 }
 
-var standardParser = NewParser(
+var standardParser = MustNewParser(
 	Minute | Hour | Dom | Month | Dow | Descriptor,
 )
 
@@ -375,8 +382,8 @@ func getDomFieldSpecial(field string, r bounds) (*specialFieldInfo, error) {
 		}
 
 		// 15W - 第15天最近的工作日
-		if strings.HasSuffix(exprLower, "w") {
-			dayStr := strings.TrimSuffix(exprLower, "w")
+		if before, ok := strings.CutSuffix(exprLower, "w"); ok {
+			dayStr := before
 			day, err := mustParseInt(dayStr)
 			if err != nil {
 				return nil, fmt.Errorf("invalid workday syntax '%s': %s", expr, err)
@@ -421,8 +428,8 @@ func getDowFieldSpecial(field string, r bounds) (*specialFieldInfo, error) {
 		exprLower := strings.ToLower(strings.TrimSpace(expr))
 
 		// 5L - 每月最后一个星期五
-		if strings.HasSuffix(exprLower, "l") {
-			dowStr := strings.TrimSuffix(exprLower, "l")
+		if before, ok := strings.CutSuffix(exprLower, "l"); ok {
+			dowStr := before
 			dow, err := parseIntOrName(dowStr, r.names)
 			if err != nil {
 				return nil, fmt.Errorf("invalid last weekday syntax '%s': %s", expr, err)

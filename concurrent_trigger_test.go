@@ -52,7 +52,9 @@ func TestConcurrentTrigger(t *testing.T) {
 		t.Fatalf("添加任务失败: %v", err)
 	}
 
-	c.Start()
+	if err := c.Start(); err != nil {
+		t.Fatalf("启动调度器失败: %v", err)
+	}
 
 	// 运行300ms，验证串行控制
 	time.Sleep(300 * time.Millisecond)
@@ -121,7 +123,7 @@ func TestManualConcurrentExecution(t *testing.T) {
 
 	// 同时触发多个执行
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
