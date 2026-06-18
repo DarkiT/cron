@@ -7,6 +7,25 @@
 
 ## [未发布]
 
+### 修复
+- 🔧 **contextWatcher 泄漏修复** - Scheduler Stop 后 contextWatcher goroutine 未退出导致泄漏，引入 watcherStop 通道在停止时通知 watcher 退出
+- 🔧 **RunNow 暂停检查** - RunNow 现在拒绝已暂停的任务
+- 🔧 **ResumeAll 状态修复** - ResumeAll 正确清除暂停状态
+- 🔧 **Dashboard 端口冲突修复** - 使用 net.Listen 获取实际地址避免端口冲突
+- 🔧 **CORS 安全增强** - CORS 中间件不再默认返回 *，web 静态资源需 API Key 认证
+- 🔧 **历史查询参数校验** - 历史查询参数严格校验（时间格式、范围、分页）
+- 🔧 **EventChannelHook 阻塞修复** - 改为非阻塞 default 避免超时等待
+- 🔧 **错误处理补全** - 各处 Start/Schedule/RegisterJob 调用增加错误处理
+- 🔧 **生命周期测试补充** - 补充相关边界条件与生命周期测试
+
+### 文档
+-  精简项目文档与更新仓库信息
+
+### 维护
+- ⬆️ 升级 8 个 GitHub Actions 依赖（checkout v3→v6、setup-go v3→v6、action-gh-release v2→v3 等）
+
+## [0.2.0] - 2025-07-23
+
 ### 新增
 - 🔧 **MaxCatchUp 可配置** - `JobOptions.MaxCatchUp` 支持配置 MisfireCatchUp 策略的最大补跑次数（默认 5 次）
 - 📊 **任务详情 API** - 新增 `GetTask(id)` 和 `GetAllTasks()` 方法，获取任务详细信息（包含 ID、调度表达式、配置、标签、下次执行时间、暂停/运行状态、创建时间）
@@ -82,7 +101,7 @@
 -  推荐实例化注册表用法和熔断文案提示
 -  提供历史清理脚本并完善 JSONL 保留说明
 
-## [2.0.0] - 2025-07-23
+## [0.1.4] - 2025-07-23
 
 ### 新增
 - 升级到 Go 1.23
